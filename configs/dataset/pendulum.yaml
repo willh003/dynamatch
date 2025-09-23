@@ -1,0 +1,30 @@
+_target_: datasets.pendulum.make_pendulum_dataset
+name: pendulum
+
+buffer_path: /home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr
+shape_meta:
+  # acceptable types: rgb, low_dim
+  obs:
+    # lowdim
+    "cart_position":
+      shape: [1]
+      type: low_dim
+    "cart_velocity":
+      shape: [1]
+      type: low_dim
+    "pole_angle":
+      shape: [1]
+      type: low_dim
+    "pole_velocity":
+      shape: [1]
+      type: low_dim
+
+  action:
+    # 1(torque)
+    shape: [1]
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: True
+normalize_lowdim: True
+val_ratio: 0.20
