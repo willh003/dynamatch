@@ -8,14 +8,8 @@ obs_encoder:
 
 noise_pred_net:
   _target_: generative_policies.UnetNoisePredictionNet
-  _partial_: True
-  input_len: ${model.action_len}
   input_dim: ${model.action_dim}
-  global_cond_dim: ???
-  timestep_embed_dim: 256
-  embed_dim: 768
-  num_heads: 12
-  mlp_ratio: 4
-  qkv_bias: True
+  global_cond_dim: 32  # 4 obs keys * 4 shape each * 2 frames
+  diffusion_step_embed_dim: 256
 num_train_steps: 100
 num_inference_steps: 10

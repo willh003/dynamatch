@@ -10,8 +10,14 @@ from diffusers.optimization import get_scheduler
 from omegaconf import OmegaConf
 from hydra.utils import instantiate
 from tqdm import tqdm
-
+from torch.utils.data import DataLoader
 from experiments.utils import set_seed, init_wandb
+
+def is_main_process():
+    """
+    TODO: right now, no support for distributed, so this is always true
+    """
+    return True
 
 def process_batch(batch, obs_horizon, action_horizon, device):
     # Take the first `obs_horizon` observations
@@ -39,7 +45,7 @@ def eval_one_epoch(config, data_loader, device, model, action_normalizer=None):
         unnormalize = lambda a: a
 
     stats = {"loss": 0, "action_mse": 0}
-    for batch in tqdm(data_loader, desc="Evaluating", disable=not is_main_process()):
+    for batch in tqdm(data_loader, desc="Evaluating"):
         # ------------ Preprocess data ------------ #
         obs, action = process_batch(
             batch, config.model.obs_encoder.num_frames, config.model.action_len, device
@@ -142,7 +148,7 @@ def maybe_save_checkpoint(
         step % config.save_every == 0 or step == (config.num_steps - 1)
     ):
         ckpt = {
-            "model": model.module.state_dict(),
+            "model": getattr(model, "module", model).state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict(),
             "scaler": scaler.state_dict(),
@@ -155,22 +161,33 @@ def maybe_save_checkpoint(
         print(f"Saved checkpoint at step {step} to {ckpt_path}")
 
 
-def train(rank, world_size, config):
+def train(config):
     # Set global seed
-    set_seed(config.seed * world_size + rank)
+    set_seed(config.seed)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    device = torch.device(f"cuda:{rank}")
+    # Hydra now controls run dir as ${hydra:run.dir} under il/runs with timestamp.
+    # Use it as the logging dir and to derive the timestamp for W&B.
+    run_dir = config.logdir
+    # Expect format: /.../il/runs/<task>_<YYYYMMDD>_<HHMMSS>
+    folder_name = os.path.basename(run_dir)
+    # Full timestamp is everything after the first underscore
+    timestamp_full = folder_name.split("_", 1)[1] if "_" in folder_name else folder_name
 
-    # Initialize WANDB
-    if is_main_process():
-        init_wandb(config, job_type="train")
+    # Initialize W&B with run id (timestamp) and name matching the local folder
+    init_wandb(
+        config,
+        job_type="train",
+        run_id_override=timestamp_full,
+        name_override=folder_name,
+    )
 
     # Create dataset
     train_set, val_set = instantiate(config.dataset)
-    train_loader, val_loader = make_distributed_data_loader(
-        train_set, val_set, config.batch_size, rank, world_size
-    )
+    train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_set, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    
 
     # Create model
     model = instantiate(config.model).to(device)
@@ -244,7 +261,7 @@ def train(rank, world_size, config):
         epoch += 1
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="train_dp.yaml")
+@hydra.main(version_base=None, config_path="configs", config_name="train_fp.yaml")
 def main(config):
     # Resolve hydra config
     OmegaConf.resolve(config)

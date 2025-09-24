@@ -1,2 +1,4 @@
 hydra-core
 zarr
+diffusers
+dask

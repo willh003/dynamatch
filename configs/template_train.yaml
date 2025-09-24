@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: logdir/${algo}/${dataset.name}/${exp_id}/${seed}
+    dir: /home/wph52/weird/dynamics/il/runs/${dataset.name}_${now:%Y%m%d_%H%M%S}
 
 algo: ${hydra:runtime.choices.model}
 exp_id: default
@@ -10,13 +10,14 @@ resume: False
 use_amp: False
 eval_task_name: ${dataset.name}
 pretrain_checkpoint_path: null
+wandb_mode: online
 
-num_steps: 100000
-eval_every: 10000
-save_every: 10000
+num_steps: 10000
+eval_every: 100 # 10000
+save_every: 1000
 
-batch_size: 36
-num_frames: 19
+batch_size: 64
+num_frames: 18
 obs_num_frames: 2
 clip_grad_norm: null
 

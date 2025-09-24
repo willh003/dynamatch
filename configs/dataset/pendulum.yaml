@@ -1,22 +1,22 @@
-_target_: datasets.pendulum.make_pendulum_dataset
+_target_: datasets.pendulum.pendulum.make_pendulum_dataset
 name: pendulum
 
-buffer_path: /home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr
+buffer_path: /home/wph52/weird/dynamics/datasets/pendulum/raw_data/pendulum_buffer.zarr
 shape_meta:
   # acceptable types: rgb, low_dim
   obs:
     # lowdim
     "cart_position":
-      shape: [1]
+      shape: [4]
       type: low_dim
     "cart_velocity":
-      shape: [1]
+      shape: [4]
       type: low_dim
     "pole_angle":
-      shape: [1]
+      shape: [4]
       type: low_dim
     "pole_velocity":
-      shape: [1]
+      shape: [4]
       type: low_dim
 
   action:

@@ -78,7 +78,7 @@ class CompressedTrajectoryBuffer:
         # Create zarr storage and root group
         storage_path = expandvars(expanduser(storage_path))
         self.restored = os.path.exists(storage_path)
-        self.storage = zarr.DirectoryStore(storage_path)
+        self.storage = zarr.storage.LocalStore(storage_path)
 
         # Mutex for zarr storage
         self.lock = Lock() if lock is None else lock
@@ -147,11 +147,11 @@ class CompressedTrajectoryBuffer:
 
     @property
     def num_episodes(self) -> int:
-        return len(self.episode_ends)
+        return self.episode_ends.shape[0]
 
     @property
     def num_steps(self) -> int:
-        return self.episode_ends[-1] if len(self.episode_ends) > 0 else 0
+        return self.episode_ends[-1] if self.episode_ends.shape[0] > 0 else 0
 
     def add_episode(self, data: dict[str, np.ndarray]):
         with self.lock:

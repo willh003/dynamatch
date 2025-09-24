@@ -3,9 +3,9 @@ import copy
 import math
 import pathlib
 
-import dask.array as da
 import numpy as np
 import torch
+import dask.array as da
 from torch.utils.data import Dataset
 
 from datasets.utils.buffer import CompressedTrajectoryBuffer

@@ -2,5 +2,4 @@ defaults:
   - dataset: pendulum
   - model: fp
   - template_train
-  - template_fp
   - _self_
