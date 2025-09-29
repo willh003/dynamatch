@@ -8,14 +8,70 @@ import gymnasium as gym
 from stable_baselines3 import PPO
 from cluster_utils import set_cluster_graphics_vars
 from utils import modify_env_gravity
-from register_envs import register_custom_envs
+import sys
+import matplotlib.pyplot as plt
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from envs.register_envs import register_custom_envs
+from envs.env_utils import modify_env_integrator
+from envs.inverse.inverse_dynamics import gym_inverse_dynamics
 from tqdm import tqdm
 # Try to import zarr, fall back to alternative if not available
-try:
-    import zarr
-except ImportError:
-    print("Warning: zarr not available. Please install with: pip install zarr")
-    zarr = None
+
+import zarr
+
+
+def flatten_actions_list(actions_list: List[np.ndarray]) -> np.ndarray:
+    """
+    Flatten a jagged list of action arrays into a single 1D array.
+    
+    Args:
+        actions_list: List of action arrays with potentially different shapes
+        
+    Returns:
+        Flattened 1D numpy array containing all actions
+    """
+    flattened = []
+    for actions in actions_list:
+        flattened.extend(actions.flatten())
+    return np.array(flattened, dtype=np.float32)
+
+
+def parse_raw_observations(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    """
+    Parse raw observation array into dictionary format expected by the dataset.
+    
+    For InvertedPendulum-v5, the observation array typically contains:
+    [x,theta, x_dot, theta_dot] where:
+    - x: cart position
+    - x_dot: cart velocity  
+    - theta: pole angle
+    - theta_dot: pole velocity
+    
+    Args:
+        obs_array: Raw observation array from environment
+        obs_shape_meta: Shape metadata for observations
+        
+    Returns:
+        Dictionary with parsed observations
+    """
+    obs_dict = {}
+    
+    # For InvertedPendulum-v5, map the 4-element array to the expected keys
+    # Environment observation order: [cart_pos, pole_angle, cart_vel,  pole_vel]
+    if len(obs_array.shape) == 1 and obs_array.shape[0] == 4:
+        # Single observation - reorder to match set_state expectation
+        obs_dict["cart_position"] = np.array([obs_array[0]])  # cart_pos
+        obs_dict["pole_angle"] = np.array([obs_array[1]])     # pole_angle  
+        obs_dict["cart_velocity"] = np.array([obs_array[2]])  # cart_vel
+        obs_dict["pole_velocity"] = np.array([obs_array[3]])  # pole_vel
+    elif len(obs_array.shape) == 2 and obs_array.shape[1] == 4:
+        # Multiple observations (trajectory) - reorder to match set_state expectation
+        obs_dict["cart_position"] = obs_array[:, 0:1]  # cart_pos
+        obs_dict["pole_angle"] = obs_array[:, 1:2]     # pole_angle
+        obs_dict["cart_velocity"] = obs_array[:, 2:3]  # cart_vel
+        obs_dict["pole_velocity"] = obs_array[:, 3:4]  # pole_vel
+    
+    return obs_dict
 
 
 def rollout_policy(
@@ -24,7 +80,7 @@ def rollout_policy(
     env_kwargs: Dict[str, Any] = None,
     num_episodes: int = 100,
     max_steps_per_episode: int = 1000,
-    deterministic: bool = True,
+    deterministic: bool = False,
     seed: Optional[int] = None,
 ) -> tuple[List[Dict[str, np.ndarray]], List[np.ndarray]]:
     """
@@ -51,35 +107,51 @@ def rollout_policy(
     
     # Create environment
     env = gym.make(env_id, **env_kwargs)
+
     
     observations_list = []
     actions_list = []
+    id_actions_list = []
+
+    id_env = gym.make(env_id, **env_kwargs)
+    id_env.reset()
     
     for episode in tqdm(range(num_episodes)):
         obs, _ = env.reset(seed=seed)
         episode_obs = []
         episode_actions = []
+        episode_id_actions = []
         
         for step in range(max_steps_per_episode):
+            episode_obs.append(obs)
             action, _ = model.predict(obs, deterministic=deterministic)
-            episode_obs.append(obs.copy())
-            episode_actions.append(action.copy())
-            
-            obs, reward, terminated, truncated, _ = env.step(action)
+            episode_actions.append(action)   
+
+            next_obs, reward, terminated, truncated, info = env.step(action)
             
             if terminated or truncated:
+                print(f"Episode {episode} terminated or truncated or done")
                 break
-        
+
+            state = np.copy(obs)    
+            next_state = np.copy(next_obs)
+            id_action = gym_inverse_dynamics(id_env, state, next_state)
+            episode_id_actions.append(id_action.item())
+            print(f"state: {state}, next_state: {next_state}, action: {action.item()}, id_action: {id_action}, ERROR: {id_action - action.item()}")
+            
+            obs = next_obs
+
         # Convert to numpy arrays
         episode_obs = np.array(episode_obs, dtype=np.float32)
         episode_actions = np.array(episode_actions, dtype=np.float32)
-        
+        episode_id_actions = np.array(episode_id_actions, dtype=np.float32)
+
         observations_list.append(episode_obs)
         actions_list.append(episode_actions)
-        
+        id_actions_list.append(episode_id_actions)
 
     env.close()
-    return observations_list, actions_list
+    return observations_list, actions_list, id_actions_list
 
 
 def save_trajectories_to_zarr(
@@ -112,12 +184,20 @@ def save_trajectories_to_zarr(
     current_end = 0
     for traj_obs, traj_actions in zip(observations_list, actions_list):
         # Handle different observation types
-        for key in shape_meta["obs"].keys():
-            if key in traj_obs:
-                flat_observations[key].extend(traj_obs[key])
-            else:
-                # If observation key not found, use the raw observation
-                flat_observations[key].extend(traj_obs)
+        if isinstance(traj_obs, dict):
+            # If observations are already in dictionary format
+            for key in shape_meta["obs"].keys():
+                if key in traj_obs:
+                    flat_observations[key].extend(traj_obs[key])
+                else:
+                    # If observation key not found, use the raw observation
+                    flat_observations[key].extend(traj_obs)
+        else:
+            # If observations are in array format (like InvertedPendulum-v5)
+            # Parse the raw observation array into the expected dictionary format
+            obs_dict = parse_raw_observations(traj_obs, shape_meta["obs"])
+            for key in shape_meta["obs"].keys():
+                flat_observations[key].extend(obs_dict[key])
         
         flat_actions.extend(traj_actions)
         current_end += len(traj_actions)
@@ -197,32 +277,12 @@ def save_trajectories_to_zarr(
     return output_path
 
 
-def collect_dataset(
-    model_path: str,
-    env_id: str,
-    config_path: str,
-    output_path: str,
-    env_kwargs: Dict[str, Any] = None,
-    num_episodes: int = 100,
-    max_steps_per_episode: int = 1000,
-    deterministic: bool = True,
-    seed: Optional[int] = None,
-    append: bool = False,
-) -> str:
+def collect_dataset(config_path: str) -> str:
     """
     Collect dataset by rolling out a policy and saving to zarr format.
     
     Args:
-        model_path: Path to the trained model .zip file
-        env_id: Gymnasium environment ID
         config_path: Path to the dataset config YAML file
-        output_path: Path to save the zarr file
-        env_kwargs: Additional environment arguments
-        num_episodes: Number of episodes to collect
-        max_steps_per_episode: Maximum steps per episode
-        deterministic: Whether to use deterministic actions
-        seed: Random seed for environment resets
-        append: Whether to append to existing file
         
     Returns:
         Path to the saved zarr file
@@ -232,10 +292,18 @@ def collect_dataset(
         config = yaml.safe_load(f)
     
     shape_meta = config['shape_meta']
+    env_id = config['env_id']
+    model_path = config['model_path']
+    env_kwargs = config.get('env_kwargs', None)
+    num_episodes = config.get('num_episodes', 100)
+    max_steps_per_episode = config.get('max_steps_per_episode', 1000)
+    deterministic = config.get('deterministic', True)
+    seed = config.get('seed', None)
+    append = config.get('append', False)
     
     # Rollout policy
     print(f"Rolling out policy for {num_episodes} episodes...")
-    observations_list, actions_list = rollout_policy(
+    observations_list, actions_list, id_actions_list = rollout_policy(
         model_path=model_path,
         env_id=env_id,
         env_kwargs=env_kwargs,
@@ -246,6 +314,8 @@ def collect_dataset(
     )
     
     # Save to zarr
+    output_path = config['buffer_path']
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     print(f"Saving trajectories to {output_path}...")
     saved_path = save_trajectories_to_zarr(
         observations_list=observations_list,
@@ -256,20 +326,37 @@ def collect_dataset(
     )
     
     print(f"Dataset collection complete! Saved to: {saved_path}")
+
+
+    
+    plot_path = os.path.join(os.path.dirname(output_path),'dataset_plots')
+    os.makedirs(plot_path, exist_ok=True)
+    all_actions = flatten_actions_list(actions_list)
+    all_id_actions = flatten_actions_list(id_actions_list)
+    plt.title(f"Actions distribution: ID vs Expert ({len(all_actions)} samples)")
+    plt.hist(all_actions, label="actions", color="blue", alpha=0.5)
+    plt.hist(all_id_actions, label="id actions", color="orange", alpha=0.5)
+    plt.legend()
+    plt.savefig(os.path.join(plot_path, "collected_actions_dist.png"))
+    plt.clf()
+
+    length = min(len(all_actions), len(all_id_actions))
+    error=all_actions[:length] - all_id_actions[:length]
+    plt.hist(error, label="error", color="green", alpha=0.5)
+    std = np.std(error)
+    mean = np.mean(error)
+    plt.legend()
+    plt.title(f"Error of ID and Expert (N={length}), mse: {np.mean(error**2):.3f}, var: {np.var(error):.3f}")
+    plt.savefig(os.path.join(plot_path, "collected_actions_error_dist.png"))
+    plt.clf()
+
+ 
     return saved_path
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Collect dataset by rolling out an RL policy.")
-    parser.add_argument("--model", required=True, help="Path to the trained model .zip file")
-    parser.add_argument("--env_id", required=True, help="Gymnasium environment ID")
     parser.add_argument("--config", required=True, help="Path to dataset config YAML file")
-    parser.add_argument("--output", required=True, help="Path to save the zarr file")
-    parser.add_argument("--episodes", type=int, default=100, help="Number of episodes to collect")
-    parser.add_argument("--max_steps", type=int, default=1000, help="Max steps per episode")
-    parser.add_argument("--stochastic", action="store_true", help="Use stochastic actions instead of deterministic")
-    parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
-    parser.add_argument("--append", action="store_true", help="Append to existing zarr file")
     return parser.parse_args()
 
 
@@ -278,17 +365,4 @@ if __name__ == "__main__":
     set_cluster_graphics_vars()
     register_custom_envs()
     
-    # Create output directory if it doesn't exist
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    
-    collect_dataset(
-        model_path=args.model,
-        env_id=args.env_id,
-        config_path=args.config,
-        output_path=args.output,
-        num_episodes=args.episodes,
-        max_steps_per_episode=args.max_steps,
-        deterministic=not args.stochastic,
-        seed=args.seed,
-        append=args.append,
-    )
+    collect_dataset(config_path=args.config)

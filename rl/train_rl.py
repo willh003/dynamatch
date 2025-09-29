@@ -11,7 +11,8 @@ from cluster_utils import set_cluster_graphics_vars
 from gymnasium.wrappers import RecordVideo
 import os
 from datetime import datetime
-from register_envs import register_custom_envs
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from envs.register_envs import register_custom_envs
 
 
 def main(config):
@@ -77,7 +78,7 @@ def main(config):
         best_model_save_path=models_dir,
         log_path=logs_dir,
         eval_freq=10000,
-        deterministic=True,
+        deterministic=False,
         render=False
     )
 

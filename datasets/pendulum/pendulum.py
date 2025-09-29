@@ -12,7 +12,7 @@ from datasets.utils.buffer import CompressedTrajectoryBuffer
 from datasets.utils.normalizer import LinearNormalizer, NestedDictLinearNormalizer
 from datasets.utils.obs_utils import unflatten_obs
 from datasets.utils.sampler import TrajectorySampler
-
+from datasets.utils.dataset import TrajectoryDataset
 
 def make_pendulum_dataset(
     name: str,
@@ -22,7 +22,7 @@ def make_pendulum_dataset(
     history_len: int = 1,
     normalize_action: bool = False,
     normalize_lowdim: bool = False,
-    val_ratio: float = 0.0,
+    val_ratio: float = 0.2,
 ):
     """
     Factory function to create pendulum training and validation datasets.
@@ -56,10 +56,9 @@ def make_pendulum_dataset(
     val_set = train_set.get_validation_dataset()
     return train_set, val_set
 
-
-class PendulumDataset(Dataset):
+class PendulumDataset(TrajectoryDataset):
     """
-    Pendulum-specific dataset that implements the same interface as DroidDataset.
+    Pendulum-specific dataset that implements the same interface as TrajectoryDataset.
     
     This class handles pendulum environments with observation space including
     cart_position, cart_velocity, pole_angle, and pole_velocity.

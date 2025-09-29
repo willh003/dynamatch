@@ -14,10 +14,10 @@ wandb_mode: online
 
 num_steps: 10000
 eval_every: 100 # 10000
-save_every: 1000
+save_every: 100
 
 batch_size: 64
-num_frames: 18
+num_frames: 18 # originally 19 for some reason
 obs_num_frames: 2
 clip_grad_norm: null
 

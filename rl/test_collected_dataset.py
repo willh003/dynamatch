@@ -163,7 +163,7 @@ def test_droid_dataset_loading(zarr_path: str, config_path: str):
 
 def main():
     # Test files
-    zarr_path = "/home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr"
+    zarr_path = "/home/wph52/weird/dynamics/datasets/sequence/pendulum_buffer.zarr"
     config_path = "/home/wph52/weird/dynamics/configs/dataset/pendulum.yaml"
     
     print("Testing collected dataset compatibility...")

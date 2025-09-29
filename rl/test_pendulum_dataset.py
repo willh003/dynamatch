@@ -25,7 +25,7 @@ def test_pendulum_dataset_loading():
             config = yaml.safe_load(f)
         
         # Dataset parameters
-        zarr_path = "/home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr"
+        zarr_path = "/home/wph52/weird/dynamics/datasets/sequence/pendulum_buffer.zarr"
         
         # Create dataset using the factory function
         train_set, val_set = make_pendulum_dataset(
@@ -92,7 +92,7 @@ def test_dataset_factory_function():
         # Test with minimal parameters
         train_set, val_set = make_pendulum_dataset(
             name="test_pendulum",
-            buffer_path="/home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr",
+            buffer_path="/home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_buffer.zarr",
             shape_meta=config['shape_meta'],
             seq_len=10,  # Use smaller seq_len for testing
             history_len=1,

@@ -14,7 +14,7 @@ def main():
     model_path = "/home/wph52/weird/dynamics/rl/runs/InvertedPendulum-v5_20250923_150900/models/best_model.zip"
     env_id = "InvertedPendulum-v5"
     config_path = "/home/wph52/weird/dynamics/configs/dataset/pendulum.yaml"
-    output_path = "/home/wph52/weird/dynamics/datasets/raw_data/pendulum_buffer.zarr"
+    output_path = "/home/wph52/weird/dynamics/datasets/sequence/pendulum_buffer.zarr"
     
     # Environment arguments (matching eval_rl.py)
     env_kwargs = {

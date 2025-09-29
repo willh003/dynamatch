@@ -8,9 +8,12 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from cluster_utils import set_cluster_graphics_vars
 from utils import modify_env_gravity
-from register_envs import register_custom_envs
-
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from envs.register_envs import register_custom_envs
+import matplotlib.pyplot as plt
 from pathlib import Path
+import numpy as np
 
 def evaluate_and_record(
     model_path: str,
@@ -19,7 +22,7 @@ def evaluate_and_record(
     run_dir: str | None = None,
     num_episodes: int = 5,
     max_steps_per_episode: int = 1000,
-    deterministic: bool = True,
+    deterministic: bool = False,
     seed: int | None = None,
     config: dict = None,
 ):
@@ -64,19 +67,29 @@ def evaluate_and_record(
     print(f"Mean reward: {mean_reward:.2f} +/- {std_reward:.2f} over {max(5, num_episodes)} episodes")
 
     # Rollout episodes with video recording
+    all_actions = []
+    all_returns = []
     for episode_idx in range(num_episodes):
         obs, _ = video_env.reset(seed=seed)
         episode_return = 0.0
         for step in range(max_steps_per_episode):
             action, _ = model.predict(obs, deterministic=deterministic)
             obs, reward, terminated, truncated, _info = video_env.step(action)
+            all_actions.append(action)
             episode_return += float(reward)
             if terminated or truncated:
                 break
         print(f"Episode {episode_idx + 1}/{num_episodes} return: {episode_return:.2f}")
-
-
+        all_returns.append(episode_return)
+    all_actions = np.array(all_actions)
+    plt.hist(all_actions)
+    plt.savefig(os.path.join(video_run_dir, "actions.png"))
+    plt.clf()
+    all_returns = np.array(all_returns)
+    plt.hist(all_returns)
+    plt.savefig(os.path.join(video_run_dir, "returns.png"))
     print(f"Saved videos to: {video_run_dir}")
+    print(f"Mean return: {np.mean(all_returns):.2f} +/- {np.std(all_returns):.2f}")
 
 
 def parse_args():
@@ -85,7 +98,7 @@ def parse_args():
     parser.add_argument("--env_id", default="InvertedPendulum-v5", help="Gymnasium env id")
     parser.add_argument("--episodes", type=int, default=5, help="Number of episodes to record")
     parser.add_argument("--max_steps", type=int, default=1000, help="Max steps per episode")
-    parser.add_argument("--stochastic", action="store_true", help="Use stochastic actions instead of deterministic")
+    parser.add_argument("--stochastic", action="store_true", default=False, help="Use stochastic actions instead of deterministic")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     return parser.parse_args()
 

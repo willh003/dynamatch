@@ -88,14 +88,12 @@ class CompressedTrajectoryBuffer:
         self.data = self.root.require_group("data")
         self.meta = self.root.require_group("meta")
 
+
         if self.restored:
             print(f"Restoring buffer from {storage_path}")
             assert "episode_ends" in self.meta
             assert all(key in self.data for key in metadata)
-            assert all(
-                self.data[key].shape[1:] == value["shape"]
-                for key, value in metadata.items()
-            )
+            assert all(self.data[key].shape[1:] == value["shape"] for key, value in metadata.items())
 
             # Check that all data have the same length and restore capacity
             lengths = {self.data[key].shape[0] for key in self.data}
