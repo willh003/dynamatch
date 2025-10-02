@@ -18,7 +18,7 @@ def set_seed(seed):
     torch.manual_seed(seed)
 
 
-def init_wandb(config, job_type, run_id_override=None, name_override=None):
+def init_wandb(config, job_type, tags=[], run_id_override=None, name_override=None):
     """Initialize WANDB logging. Only use in main process.
 
     Args:
@@ -46,6 +46,7 @@ def init_wandb(config, job_type, run_id_override=None, name_override=None):
         mode=config.wandb_mode,
         entity="willhu003",
         id=run_id,
+        tags=tags
     )
 
 

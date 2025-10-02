@@ -10,7 +10,8 @@ from wandb.integration.sb3 import WandbCallback
 from cluster_utils import set_cluster_graphics_vars
 from gymnasium.wrappers import RecordVideo
 import os
-from datetime import datetime
+from datetime import datetime   
+import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
 
@@ -53,6 +54,7 @@ def main(config):
         mode=config.get('wandb_mode', 'online'),
         dir=run_dir,
         name=config.get('run_name', os.path.basename(run_dir)),
+        tags=['rl']
     )
 
     # Initialize the PPO agent
@@ -90,7 +92,7 @@ def main(config):
     # Train the agent
     print("Training the PPO agent...")
     model.learn(
-        total_timesteps=500000,
+        total_timesteps=config.get('total_steps', 1000000),
         callback=callbacks,
         progress_bar=True
     )
@@ -106,12 +108,28 @@ if __name__ == "__main__":
     set_cluster_graphics_vars()
     register_custom_envs()
 
+    # config = {
+    #     'env_id': 'InvertedPendulumDynamicsShift-v5',
+    #     'env_kwargs': {
+    #         'action_add': .5
+    #     },
+    #     'wandb_mode': 'online'
+    # }
+
+    # config = {
+    #     'env_id': 'InvertedPendulumIntegrableMLPShift-v5',
+    #     'env_kwargs': {
+    #         'checkpoint_path': '/home/wph52/weird/dynamics/envs/transformations/pendulum_shift_mlp/random_weights.pth'
+    #     },
+    #     'wandb_mode': 'online',
+    #     'total_steps': 1000000
+    # }
+
     config = {
-        'env_id': 'InvertedPendulumDynamicsShift-v5',
-        'env_kwargs': {
-            'action_add': .5
-        },
-        'wandb_mode': 'online'
+        'env_id': 'Ant-v5',
+        'env_kwargs': {},
+        'wandb_mode': 'online',
+        'total_steps': 5000000
     }
 
     main(config)

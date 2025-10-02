@@ -7,8 +7,8 @@ import mujoco
 import gymnasium as gym
 from stable_baselines3 import PPO
 import copy
-from envs.inverse.inverse_dynamics import mujoco_inverse_dynamics, gym_inverse_dynamics
-from envs.inverse.set_state import set_state
+from inverse.physics_inverse_dynamics import mujoco_inverse_dynamics, gym_inverse_dynamics
+from inverse.utils import set_state
 import matplotlib.pyplot as plt
 import os
 import imageio

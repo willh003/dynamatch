@@ -181,6 +181,7 @@ def train(config):
         job_type="train",
         run_id_override=timestamp_full,
         name_override=folder_name,
+        tags=['fp', config.model.name]
     )
 
     # Create dataset

@@ -4,11 +4,11 @@ import numpy as np
 import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 import gymnasium as gym
-from datasets.pendulum.pendulum import make_pendulum_dataset
-from config_utils import filter_config_with_debug
+from datasets.trajectory_dataset import make_trajectory_dataset
+from utils.config_utils import filter_config_with_debug, load_yaml_config
 import yaml
 from torch.utils.data import DataLoader
-from envs.inverse.inverse_dynamics import gym_inverse_dynamics
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
 import mujoco 
 import matplotlib.pyplot as plt
@@ -25,17 +25,16 @@ def test_id_on_dataset(test_env_id,dataset_config_path, state_keys, frame_skip=1
     
     print("=== ID on Dataset Test ===")
     
-    with open(dataset_config_path, 'r') as f:
-        dataset_config = yaml.safe_load(f)
+    dataset_config = load_yaml_config(dataset_config_path)
 
     dataset_template_vars = {'num_frames': 18, 'obs_num_frames': 2}
     batch_size = 64
     
-    # Filter config to only include valid kwargs for make_pendulum_dataset
-    filtered_config = filter_config_with_debug(dataset_config, make_pendulum_dataset, debug=True, template_vars=dataset_template_vars)
+    # Filter config to only include valid kwargs for make_trajectory_dataset
+    filtered_config = filter_config_with_debug(dataset_config, make_trajectory_dataset, debug=True, template_vars=dataset_template_vars)
 
     print(f"\n=== Creating Dataset ===")
-    train_set, val_set = make_pendulum_dataset(**filtered_config)
+    train_set, val_set = make_trajectory_dataset(**filtered_config)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Val set size: {len(val_set)}")

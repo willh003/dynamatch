@@ -7,16 +7,15 @@ import numpy as np
 import gymnasium as gym
 from stable_baselines3 import PPO
 from cluster_utils import set_cluster_graphics_vars
-from utils import modify_env_gravity
 import sys
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
 from envs.env_utils import modify_env_integrator
-from envs.inverse.inverse_dynamics import gym_inverse_dynamics
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics, compare_fwd_inv, get_ctrl_from_applied_force, inverse_acceleration_integration
 from tqdm import tqdm
-# Try to import zarr, fall back to alternative if not available
-
+import copy
+import mujoco
 import zarr
 
 
@@ -36,7 +35,7 @@ def flatten_actions_list(actions_list: List[np.ndarray]) -> np.ndarray:
     return np.array(flattened, dtype=np.float32)
 
 
-def parse_raw_observations(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """
     Parse raw observation array into dictionary format expected by the dataset.
     
@@ -73,6 +72,55 @@ def parse_raw_observations(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]
     
     return obs_dict
 
+def parse_raw_observations_ant(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    """
+    Parse raw observation array into dictionary format expected by the dataset.
+    
+    For Ant-v5, the observation array typically contains:
+    """
+    x_pos = np.array([d["x_position"] for d in info])[:,None]
+    y_pos = np.array([d["y_position"] for d in info])[:,None]
+
+    full_obs = np.concatenate([x_pos, y_pos,obs_array], axis=1)
+    obs_dict = {"full_obs": full_obs}
+    return obs_dict
+
+def parse_raw_observations(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    """
+    Parse raw observation array into dictionary format expected by the dataset.
+    """
+    if "theta" in obs_shape_meta:
+        # TODO: better check for env type
+        return parse_raw_observations_pendulum(obs_array, obs_shape_meta)
+    else:
+        return parse_raw_observations_ant(obs_array, info, obs_shape_meta)
+
+def get_state_from_obs_pendulum(obs_array: np.ndarray) -> np.ndarray:
+    """
+    Get state from observation array for pendulum environment.
+    """
+    return obs_array
+
+def get_state_from_obs_ant(obs_array: np.ndarray, info:dict) -> np.ndarray:
+    """
+    Get state from observation array for ant environment.
+    """
+    x_pos = info['x_position']
+    y_pos = info['y_position']
+
+    full_obs = np.concatenate([[x_pos], [y_pos],obs_array], axis=0)
+    return full_obs
+
+def get_state_from_obs(obs_array: np.ndarray, info:dict, env_id: str) -> np.ndarray:
+    """
+    Get state from observation array for environment.
+    """
+    if "Pendulum" in env_id:
+        return get_state_from_obs_pendulum(obs_array)
+    elif "Ant" in env_id:
+        return get_state_from_obs_ant(obs_array, info)
+    else:
+        raise ValueError(f"Environment {env_id} not supported for state getting - implement get_state_from_obs for this environment")
 
 def rollout_policy(
     model_path: str,
@@ -111,35 +159,56 @@ def rollout_policy(
     
     observations_list = []
     actions_list = []
+    infos_list = []
     id_actions_list = []
 
     id_env = gym.make(env_id, **env_kwargs)
     id_env.reset()
+
+    all_rewards = []
     
     for episode in tqdm(range(num_episodes)):
-        obs, _ = env.reset(seed=seed)
+        obs, info = env.reset(seed=seed)
         episode_obs = []
         episode_actions = []
         episode_id_actions = []
+        episode_infos = []
         
         for step in range(max_steps_per_episode):
             episode_obs.append(obs)
+            episode_infos.append(info)
             action, _ = model.predict(obs, deterministic=deterministic)
             episode_actions.append(action)   
 
-            next_obs, reward, terminated, truncated, info = env.step(action)
+            # this captures error inherent to mujoco forward/inverse, using the ground truth acceleration
+
+            fwd_inv_stats = compare_fwd_inv(action, copy.deepcopy(env.unwrapped.model), copy.deepcopy(env.unwrapped.data))
             
+            next_obs, reward, terminated, truncated, next_info = env.step(action)
+
+            all_rewards.append(reward)
             if terminated or truncated:
                 print(f"Episode {episode} terminated or truncated or done")
                 break
-
-            state = np.copy(obs)    
-            next_state = np.copy(next_obs)
-            id_action = gym_inverse_dynamics(id_env, state, next_state)
-            episode_id_actions.append(id_action.item())
-            print(f"state: {state}, next_state: {next_state}, action: {action.item()}, id_action: {id_action}, ERROR: {id_action - action.item()}")
             
+            # compute ID using an estimate of the acceleration (qvel finite difference)
+            state = np.copy(get_state_from_obs(obs, info, env_id))
+            next_state = np.copy(get_state_from_obs(next_obs, next_info, env_id))
+            id_action = gym_inverse_dynamics(id_env, state, next_state)
+            episode_id_actions.append(id_action)
+            action_error = action - id_action
+
+            print(f"Action: {fwd_inv_stats["ctrl"]}")
+            print(f"Fwdinv action: {fwd_inv_stats["ctrl_inv"]}")
+            print(f"Full gym ID action: {id_action}")
+            print(f"Error from fwdinv (no accel integration): {fwd_inv_stats["ctrl_error"]}")
+            print(f"Error from full gym ID: {np.linalg.norm(action_error)}")
+            print(f"MAPE from fwdinv (no accel integration): {np.mean(np.abs((action - fwd_inv_stats["ctrl_inv"]) / action))*100:.3f}%")
+            print(f"MAPE from full gym ID: {np.mean(np.abs(action_error / action))*100:.3f}%")
+            print("-"*20)
+
             obs = next_obs
+            info = next_info
 
         # Convert to numpy arrays
         episode_obs = np.array(episode_obs, dtype=np.float32)
@@ -148,14 +217,16 @@ def rollout_policy(
 
         observations_list.append(episode_obs)
         actions_list.append(episode_actions)
+        infos_list.append(episode_infos)
         id_actions_list.append(episode_id_actions)
 
     env.close()
-    return observations_list, actions_list, id_actions_list
+    return observations_list, infos_list, actions_list, id_actions_list, all_rewards
 
 
 def save_trajectories_to_zarr(
     observations_list: List[Dict[str, np.ndarray]],
+    infos_list: List[Dict[str, np.ndarray]],
     actions_list: List[np.ndarray],
     output_path: str,
     shape_meta: Dict[str, Any],
@@ -182,7 +253,7 @@ def save_trajectories_to_zarr(
     episode_ends = []
     
     current_end = 0
-    for traj_obs, traj_actions in zip(observations_list, actions_list):
+    for traj_obs, traj_info, traj_actions in zip(observations_list, infos_list, actions_list):
         # Handle different observation types
         if isinstance(traj_obs, dict):
             # If observations are already in dictionary format
@@ -195,7 +266,7 @@ def save_trajectories_to_zarr(
         else:
             # If observations are in array format (like InvertedPendulum-v5)
             # Parse the raw observation array into the expected dictionary format
-            obs_dict = parse_raw_observations(traj_obs, shape_meta["obs"])
+            obs_dict = parse_raw_observations(traj_obs, traj_info, shape_meta["obs"])
             for key in shape_meta["obs"].keys():
                 flat_observations[key].extend(obs_dict[key])
         
@@ -206,6 +277,10 @@ def save_trajectories_to_zarr(
     # Convert to numpy arrays
     for key in flat_observations:
         flat_observations[key] = np.array(flat_observations[key], dtype=np.float32)
+
+        if np.isnan(flat_observations[key]).any():
+            raise ValueError(f"NaN found in observations for key: {key}")
+        
     flat_actions = np.array(flat_actions, dtype=np.float32)
     episode_ends = np.array(episode_ends, dtype=np.int64)
     
@@ -303,7 +378,8 @@ def collect_dataset(config_path: str) -> str:
     
     # Rollout policy
     print(f"Rolling out policy for {num_episodes} episodes...")
-    observations_list, actions_list, id_actions_list = rollout_policy(
+
+    observations_list, infos_list, actions_list, id_actions_list, all_rewards = rollout_policy(
         model_path=model_path,
         env_id=env_id,
         env_kwargs=env_kwargs,
@@ -319,16 +395,17 @@ def collect_dataset(config_path: str) -> str:
     print(f"Saving trajectories to {output_path}...")
     saved_path = save_trajectories_to_zarr(
         observations_list=observations_list,
+        infos_list=infos_list,
         actions_list=actions_list,
         output_path=output_path,
         shape_meta=shape_meta,
         append=append,
     )
-    
+
+    print(f"Mean reward: {np.mean(all_rewards):.3f}, Std reward: {np.std(all_rewards):.3f}, Max reward: {np.max(all_rewards):.3f}, Min reward: {np.min(all_rewards):.3f}")
     print(f"Dataset collection complete! Saved to: {saved_path}")
 
 
-    
     plot_path = os.path.join(os.path.dirname(output_path),'dataset_plots')
     os.makedirs(plot_path, exist_ok=True)
     all_actions = flatten_actions_list(actions_list)
@@ -350,7 +427,13 @@ def collect_dataset(config_path: str) -> str:
     plt.savefig(os.path.join(plot_path, "collected_actions_error_dist.png"))
     plt.clf()
 
- 
+    plt.hist(all_rewards, label="rewards", color="red", alpha=0.5)
+    plt.legend()
+    plt.title(f"Rewards distribution: ({len(all_rewards)} samples)")
+    plt.savefig(os.path.join(plot_path, "collected_rewards_dist.png"))
+    plt.clf()
+
+
     return saved_path
 
 

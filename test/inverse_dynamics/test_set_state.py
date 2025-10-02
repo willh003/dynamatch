@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import numpy as np
 import gymnasium as gym
-from envs.inverse.set_state import set_state
+from inverse.utils import set_state
 
 def test_set_state():
     """Test that set_state correctly sets the environment state and returns it."""

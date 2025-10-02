@@ -79,15 +79,6 @@ def load_action_translator_from_config(config_path, base_policy_checkpoint=None,
     if action_translator_checkpoint_path is None:
         raise ValueError("Action translator checkpoint path must be provided either in config or as argument")
     
-    # Handle Hydra template variables - try to infer from checkpoint or use defaults
-    if 'action_dim' in action_translator_config and isinstance(action_translator_config['action_dim'], str):
-        print(f"Warning: action_dim is a template variable '{action_translator_config['action_dim']}', using default value 1")
-        action_translator_config['action_dim'] = 1  # Pendulum has 1D action space
-    
-    if 'obs_dim' in action_translator_config and isinstance(action_translator_config['obs_dim'], str):
-        print(f"Warning: obs_dim is a template variable '{action_translator_config['obs_dim']}', using default value 4")
-        action_translator_config['obs_dim'] = 4  # Pendulum has 4D observation space (cart_pos, pole_angle, cart_vel, pole_vel)
-    
     # Validate that we have integer dimensions
     try:
         action_dim = int(action_translator_config['action_dim'])

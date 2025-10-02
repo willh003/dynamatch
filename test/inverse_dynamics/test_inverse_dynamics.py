@@ -7,7 +7,7 @@ import mujoco
 import gymnasium as gym
 from stable_baselines3 import PPO
 import copy
-from envs.inverse.inverse_dynamics import inverse_acceleration_integration, get_ctrl_from_qfrc_actuator
+from inverse.physics_inverse_dynamics import inverse_acceleration_integration, get_ctrl_from_qfrc_actuator
 import matplotlib.pyplot as plt
 
 

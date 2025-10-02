@@ -30,7 +30,7 @@ def test_pendulum_syntax():
             'def __getitem__',
             'def __repr__',
             'def get_validation_dataset',
-            'def make_pendulum_dataset',
+            'def make_trajectory_dataset',
             'def _init_buffer',
             'def _init_lowdim_normalizer',
             'def _init_action_normalizer',

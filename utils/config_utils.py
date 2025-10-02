@@ -6,7 +6,12 @@ Utility functions for handling configuration files and filtering parameters.
 import inspect
 import re
 from typing import Dict, Any, Callable
+import yaml
 
+def load_yaml_config(config_path):
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    return config
 
 def resolve_template_variables(config: Dict[str, Any], template_vars: Dict[str, Any] = None) -> Dict[str, Any]:
     """

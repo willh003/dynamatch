@@ -12,9 +12,24 @@ from datasets.utils.buffer import CompressedTrajectoryBuffer
 from datasets.utils.normalizer import LinearNormalizer, NestedDictLinearNormalizer
 from datasets.utils.obs_utils import unflatten_obs
 from datasets.utils.sampler import TrajectorySampler
-from datasets.utils.dataset import TrajectoryDataset
 
-def make_pendulum_dataset(
+class TrajectoryDatasetInterface(Dataset):
+    """
+    Base class for trajectory datasets.
+    """
+    def __len__(self) -> int:
+        pass
+
+    def __getitem__(self, idx) -> dict[str, torch.Tensor]:
+        pass
+
+    def __repr__(self) -> str:
+        pass
+
+    def get_validation_dataset(self) -> "TrajectoryDataset":
+        pass
+
+def make_trajectory_dataset(
     name: str,
     buffer_path: str,
     shape_meta: dict,
@@ -25,7 +40,7 @@ def make_pendulum_dataset(
     val_ratio: float = 0.2,
 ):
     """
-    Factory function to create pendulum training and validation datasets.
+    Factory function to create Trajectory training and validation datasets.
     
     Args:
         name: Dataset name
@@ -41,7 +56,7 @@ def make_pendulum_dataset(
         Tuple of (train_dataset, val_dataset)
     """
     # Training dataset
-    train_set = PendulumDataset(
+    train_set = TrajectoryDataset(
         name=name,
         buffer_path=buffer_path,
         shape_meta=shape_meta,
@@ -56,11 +71,11 @@ def make_pendulum_dataset(
     val_set = train_set.get_validation_dataset()
     return train_set, val_set
 
-class PendulumDataset(TrajectoryDataset):
+class TrajectoryDataset(TrajectoryDatasetInterface):
     """
-    Pendulum-specific dataset that implements the same interface as TrajectoryDataset.
+    Trajectory-specific dataset that implements the same interface as TrajectoryDataset.
     
-    This class handles pendulum environments with observation space including
+    This class handles Trajectory environments with observation space including
     cart_position, cart_velocity, pole_angle, and pole_velocity.
     """
     
@@ -77,7 +92,7 @@ class PendulumDataset(TrajectoryDataset):
         num_workers: int = 8,
     ):
         """
-        Initialize the PendulumDataset.
+        Initialize the TrajectoryDataset.
         
         Args:
             name: Dataset name
@@ -141,6 +156,7 @@ class PendulumDataset(TrajectoryDataset):
         """Initialize the compressed trajectory buffer."""
         # Create metadata
         metadata = {}
+        
         for key, shape in self._image_shapes.items():
             metadata[f"obs.{key}"] = {"shape": shape, "dtype": np.uint8}
         for key, shape in self._lowdim_shapes.items():
@@ -204,7 +220,7 @@ class PendulumDataset(TrajectoryDataset):
     def __repr__(self) -> str:
         """Return string representation of the dataset."""
         return (
-            "<PendulumDataset>\n"
+            "<TrajectoryDataset>\n"
             f"name: {self.name}\n"
             f"num_samples: {len(self)}\n"
             f"{self.buffer}"
@@ -244,7 +260,7 @@ class PendulumDataset(TrajectoryDataset):
         Create a validation dataset from the current dataset.
         
         Returns:
-            PendulumDataset: A new dataset instance configured for validation
+            TrajectoryDataset: A new dataset instance configured for validation
         """
         val_set = copy.copy(self)
         val_set.train_mask = ~self.train_mask

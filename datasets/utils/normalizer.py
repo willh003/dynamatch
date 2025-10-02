@@ -20,9 +20,16 @@ class LinearNormalizer:
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """
-        Normalizes the input data using the stored statistics.
+        Normalizes the input data using the stored statistics. Guards against zero scales by always zeroing these out.
         """
-        return (x - self.offset) / self.scale
+        # Guard against zero scales (constant dimensions). For zero-scale dims,
+        # map to 0 to avoid NaNs/Infs during normalization.
+        safe_scale = np.where(self.scale == 0, 1.0, self.scale)
+        normalized = (x - self.offset) / safe_scale
+        if np.any(self.scale == 0):
+            # Explicitly zero-out constant dimensions
+            normalized = np.where(self.scale == 0, 0.0, normalized)
+        return normalized
 
     def reconstruct(self, x: np.ndarray) -> np.ndarray:
         """

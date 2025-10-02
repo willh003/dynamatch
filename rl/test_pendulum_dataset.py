@@ -17,7 +17,7 @@ def test_pendulum_dataset_loading():
     
     try:
         # Import the dataset classes
-        from datasets.pendulum import make_pendulum_dataset
+        from datasets.trajectory_dataset import make_trajectory_dataset
         
         # Load config
         config_path = "/home/wph52/weird/dynamics/configs/dataset/pendulum.yaml"
@@ -28,7 +28,7 @@ def test_pendulum_dataset_loading():
         zarr_path = "/home/wph52/weird/dynamics/datasets/sequence/pendulum_buffer.zarr"
         
         # Create dataset using the factory function
-        train_set, val_set = make_pendulum_dataset(
+        train_set, val_set = make_trajectory_dataset(
             name=config['name'],
             buffer_path=zarr_path,
             shape_meta=config['shape_meta'],
@@ -78,11 +78,11 @@ def test_pendulum_dataset_loading():
         return False
 
 def test_dataset_factory_function():
-    """Test that the make_pendulum_dataset factory function works correctly."""
-    print("\nTesting make_pendulum_dataset factory function...")
+    """Test that the make_trajectory_dataset factory function works correctly."""
+    print("\nTesting make_trajectory_dataset factory function...")
     
     try:
-        from datasets.pendulum import make_pendulum_dataset
+        from datasets.trajectory_dataset import make_trajectory_dataset
         
         # Load config
         config_path = "/home/wph52/weird/dynamics/configs/dataset/pendulum.yaml"
@@ -90,7 +90,7 @@ def test_dataset_factory_function():
             config = yaml.safe_load(f)
         
         # Test with minimal parameters
-        train_set, val_set = make_pendulum_dataset(
+        train_set, val_set = make_trajectory_dataset(
             name="test_pendulum",
             buffer_path="/home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_buffer.zarr",
             shape_meta=config['shape_meta'],

@@ -7,8 +7,6 @@ import mujoco
 import gymnasium as gym
 from stable_baselines3 import PPO
 
-from envs.inverse.inverse_dynamics import get_ctrl_from_qfrc_actuator
-
 def align_mujoco_and_gym(model_path=None, num_episodes=10, episode_length=200, frame_skip=None):
     """
     Align the MuJoCo and Gym environments.

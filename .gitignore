@@ -8,3 +8,4 @@
 *.pyzw
 *.pyz
 wandb/*
+videos/*

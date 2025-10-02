@@ -8,14 +8,15 @@ base_policy:
     activation_fn: nn.ReLU
     ortho_init: False
   # Path to the trained base policy checkpoint
-  checkpoint_path: /home/wph52/weird/dynamics/rl/runs/InvertedPendulum-v5_20250923_150900/models/best_model.zip
+  checkpoint_path: /home/wph52/weird/dynamics/rl/runs/Ant-v5_20250929_192912/models/best_model.zip
 
 action_translator:
   _target_: action_translation.SimpleActionTranslator
-  action_dim: ${dataset.shape_meta.action.shape[0]}
-  obs_dim: ${dataset.shape_meta.obs.shape[0]}
+  action_dim: 8
+  obs_dim: 107
+  net_arch: [32, 32]
   # Path to the trained action translator checkpoint
-  checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/action_translator_model.pth 
+  checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_high_friction/action_translator_model.pth
 
 
 

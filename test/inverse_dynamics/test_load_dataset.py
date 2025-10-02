@@ -6,8 +6,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from datasets.pendulum.pendulum import make_pendulum_dataset
-from utils.config_utils import filter_config_with_debug
+from datasets.trajectory_dataset import make_trajectory_dataset
+from utils.config_utils import filter_config_with_debug, load_yaml_config
 import yaml
 from torch.utils.data import DataLoader
 
@@ -24,11 +24,12 @@ def test_dataset_comprehensive(dataset_config_path):
     dataset_template_vars = {'num_frames': 18, 'obs_num_frames': 2}
     batch_size = 64
     
-    # Filter config to only include valid kwargs for make_pendulum_dataset
-    filtered_config = filter_config_with_debug(dataset_config, make_pendulum_dataset, debug=True, template_vars=dataset_template_vars)
+    # Filter config to only include valid kwargs for make_trajectory_dataset
+    dataset_config = load_yaml_config(dataset_config_path)
+    filtered_config = filter_config_with_debug(dataset_config, make_trajectory_dataset, debug=True, template_vars=dataset_template_vars)
 
     print(f"\n=== Creating Dataset ===")
-    train_set, val_set = make_pendulum_dataset(**filtered_config)
+    train_set, val_set = make_trajectory_dataset(**filtered_config)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Val set size: {len(val_set)}")
@@ -192,11 +193,11 @@ def test_dataset_simple(dataset_config_path):
 
     dataset_template_vars = {'num_frames': 18, 'obs_num_frames': 2}
     batch_size = 64
-    # Filter config to only include valid kwargs for make_pendulum_dataset
-    filtered_config = filter_config_with_debug(dataset_config, make_pendulum_dataset, debug=True, template_vars=dataset_template_vars)
+    # Filter config to only include valid kwargs for make_trajectory_dataset
+    filtered_config = filter_config_with_debug(dataset_config, make_trajectory_dataset, debug=True, template_vars=dataset_template_vars)
 
     
-    train_set, val_set = make_pendulum_dataset(**filtered_config)
+    train_set, val_set = make_trajectory_dataset(**filtered_config)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4)

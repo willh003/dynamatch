@@ -2,10 +2,10 @@ _target_: datasets.trajectory_dataset.make_trajectory_dataset
 name: pendulum
 
 # Dataset collection parameters
-model_path: /home/wph52/weird/dynamics/rl/runs/InvertedPendulum-v5_20250923_150900/models/best_model.zip
-env_id: InvertedPendulumIntegrableDynamicsShift-v5
+model_path: /home/wph52/weird/dynamics/rl/runs/InvertedPendulumIntegrableMLPShift-v5_20250929_222040/models/best_model.zip
+env_id: InvertedPendulumIntegrableMLPShift-v5
 source_env_id: InvertedPendulumIntegrable-v5
-buffer_path: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_integrable_dynamics_shift/buffer.zarr
+buffer_path: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_integrable_mlp_shift/buffer.zarr
 env_kwargs: null
 num_episodes: 10
 max_steps_per_episode: 1000
@@ -29,6 +29,7 @@ shape_meta:
     "pole_velocity":
       shape: [1]
       type: low_dim
+
   action:
     # 1(torque)
     shape: [1]

@@ -5,12 +5,15 @@ import yaml
 import numpy as np
 import zarr
 from tqdm import tqdm
+import gymnasium as gym
+import matplotlib.pyplot as plt
+from collections import OrderedDict
 
 # Add parent directories to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from datasets.pendulum.pendulum import make_pendulum_dataset
-from utils.config_utils import filter_config_with_debug
-from envs.inverse.inverse_dynamics import gym_inverse_dynamics
+from datasets.trajectory_dataset import make_trajectory_dataset
+from utils.config_utils import filter_config_with_debug, load_yaml_config
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
 
 def plot_action_distributions(original_actions, shifted_actions, output_path='action_distributions.png'):
@@ -20,7 +23,7 @@ def plot_action_distributions(original_actions, shifted_actions, output_path='ac
     plt.subplot(1, 2, 1)
     plt.hist(original_actions, alpha=0.7, label='Original Actions (ID)', bins=50)
     plt.hist(shifted_actions, alpha=0.7, label='Shifted Actions', bins=50)
-    plt.title('Action Distributions')
+    plt.title(f'Action Distributions (total {len(original_actions)} samples)')
     plt.xlabel('Action Value')
     plt.ylabel('Frequency')
     plt.legend()
@@ -40,20 +43,16 @@ def plot_action_distributions(original_actions, shifted_actions, output_path='ac
     print(f"Action distribution plots saved to {output_path}")
 
 
-def load_shifted_dynamics_dataset(dataset_config_path, state_keys, max_samples=None):
+def load_shifted_dynamics_dataset(dataset_config, state_keys):
     """Load dataset with shifted dynamics."""
-    print("=== Loading Shifted Dynamics Dataset ===")
-    
-    with open(dataset_config_path, 'r', encoding='utf-8') as f:
-        dataset_config = yaml.safe_load(f)
 
     dataset_template_vars = {'num_frames': 18, 'obs_num_frames': 2}
     
-    # Filter config to only include valid kwargs for make_pendulum_dataset
-    filtered_config = filter_config_with_debug(dataset_config, make_pendulum_dataset, debug=True, template_vars=dataset_template_vars)
+    # Filter config to only include valid kwargs for make_trajectory_dataset
+    filtered_config = filter_config_with_debug(dataset_config, make_trajectory_dataset, debug=True, template_vars=dataset_template_vars)
 
     print("\n=== Creating Dataset ===")
-    train_set, val_set = make_pendulum_dataset(**filtered_config)
+    train_set, val_set = make_trajectory_dataset(**filtered_config)
     
     print(f"Train set size: {len(train_set)}")
     print(f"Val set size: {len(val_set)}")
@@ -81,12 +80,13 @@ def get_original_actions(train_set, state_keys, inverse_dynamics_env, max_sample
         # reconstruct state from dataset obs
         for state_key in state_keys:
             state.append(seq['obs'][state_key][0])
-        state = np.array(state).squeeze(axis=1)
+
+        state = np.array(state).squeeze()
 
         next_state = []
         for state_key in state_keys:
             next_state.append(seq['obs'][state_key][1])
-        next_state = np.array(next_state).squeeze(axis=1)
+        next_state = np.array(next_state).squeeze()
 
         # Unnormalize the observations before passing to inverse dynamics
         if hasattr(train_set, 'lowdim_normalizer'):
@@ -110,8 +110,9 @@ def get_original_actions(train_set, state_keys, inverse_dynamics_env, max_sample
         else:
             shifted_action_unnorm = shifted_action.cpu().numpy()
         
-        original_actions.append(original_action.item())
-        shifted_actions.append(shifted_action_unnorm.item())
+        
+        original_actions.append(original_action)
+        shifted_actions.append(shifted_action_unnorm)
         states.append(state_unnorm)
         next_states.append(next_state_unnorm)
         
@@ -120,9 +121,10 @@ def get_original_actions(train_set, state_keys, inverse_dynamics_env, max_sample
             print(f"Sample {i}:")
             print(f"  State (unnormalized): {state_unnorm}")
             print(f"  Next state (unnormalized): {next_state_unnorm}")
-            print(f"  Action in dataset: {shifted_action_unnorm.item():.4f}")
-            print(f"  ID predicted action: {original_action.item():.4f}")
-            print(f"  Error: {(original_action - shifted_action_unnorm).item():.4f}")
+            print(f"  Action in dataset: {shifted_action_unnorm}")
+            print(f"  ID predicted action: {original_action}")
+            print(f"  Error: {np.linalg.norm(shifted_action_unnorm - original_action):.4f}")
+            print(f"  MAPE: {np.mean(np.abs((shifted_action_unnorm - original_action)/shifted_action_unnorm))*100:.4f}%")
             print()
 
     return np.array(states), np.array(original_actions), np.array(shifted_actions)
@@ -161,11 +163,9 @@ def create_action_translation_dataset(states, original_actions, shifted_actions,
     return output_path
 
 
-def create_output_path_from_config(config_path):
+def create_output_path_from_config(config):
     """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    
+
     buffer_path = config['buffer_path']
     # Replace 'sequence' with 'relabeled_actions' in the path
     output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
@@ -175,29 +175,29 @@ def create_output_path_from_config(config_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Create action translation dataset from sequence dataset')
-    parser.add_argument('--config_path', type=str, required=True,
+    parser.add_argument('--config', type=str, required=True,
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--max_samples', type=int, default=None,
                        help='Maximum number of samples to process')
-    
     args = parser.parse_args()
+
+    register_custom_envs()
+
+    # Load config
+    config = load_yaml_config(args.config)
     
     # Create output path from config
-    output_path = create_output_path_from_config(args.config_path)
+    output_path = create_output_path_from_config(config)
     print(f"Output path: {output_path}")
-    
-    # Register custom environments
-    register_custom_envs()
-    
+
     # Define state keys for pendulum environment
-    state_keys = ['cart_position', 'pole_angle', 'cart_velocity', 'pole_velocity']
+    state_keys = OrderedDict(config['shape_meta']['obs']).keys()
     
     # Load shifted dynamics dataset
-    train_set, _, state_keys = load_shifted_dynamics_dataset(args.config_path, state_keys, args.max_samples)
-    
+    train_set, _, state_keys = load_shifted_dynamics_dataset(config, state_keys)
+
     # Create inverse dynamics environment
-    inverse_dynamics_env_id = 'InvertedPendulumIntegrable-v5'  # Original dynamics environment
-    import gymnasium as gym
+    inverse_dynamics_env_id = config['source_env_id']
     inverse_dynamics_env = gym.make(inverse_dynamics_env_id)
     
     # Get original actions using inverse dynamics

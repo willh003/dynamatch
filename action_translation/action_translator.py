@@ -25,6 +25,7 @@ class ActionTranslatorSB3Policy:
     def predict_base_and_translated(        
         self,
         observation: Union[np.ndarray, dict[str, np.ndarray]],
+        full_observation: Optional[dict[str, np.ndarray]] = None,
         state: Optional[tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
         deterministic: bool = False,
@@ -35,20 +36,25 @@ class ActionTranslatorSB3Policy:
         base_prediction = self.base_policy.predict(observation, state, episode_start, deterministic)
         # Extract just the action from the base policy prediction (which is a tuple of (action, state))
         base_action = base_prediction[0] if isinstance(base_prediction, tuple) else base_prediction
-        translated_action = self.action_translator.predict(observation, base_action)
+        translated_action = self.action_translator.predict(full_observation, base_action)
         return translated_action, base_action
 
 class SimpleActionTranslator(nn.Module):
-    def __init__(self, action_dim, obs_dim):
+    def __init__(self, action_dim, obs_dim, net_arch=None):
         super(SimpleActionTranslator, self).__init__()
         in_feat_dim = action_dim + obs_dim
-        self.network = nn.Sequential(
-            nn.Linear(in_feat_dim, 32),
-            nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.ReLU(),
-            nn.Linear(32, action_dim)
-        )
+        # Default to two hidden layers of 32 units each for backward compatibility
+        if net_arch is None:
+            net_arch = [32, 32]
+
+        layers = []
+        prev_dim = in_feat_dim
+        for hidden_units in net_arch:
+            layers.append(nn.Linear(prev_dim, hidden_units))
+            layers.append(nn.ReLU())
+            prev_dim = hidden_units
+        layers.append(nn.Linear(prev_dim, action_dim))
+        self.network = nn.Sequential(*layers)
 
     def forward(self, obs, action):
         return self.network(torch.cat([obs, action], dim=-1))
@@ -62,6 +68,7 @@ class SimpleActionTranslator(nn.Module):
         with torch.no_grad():
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0) if len(obs.shape) == 1 else torch.FloatTensor(obs)
             action_tensor = torch.FloatTensor(action).unsqueeze(0) if len(action.shape) == 1 else torch.FloatTensor(action)
+
             translated_action = self.forward(obs_tensor, action_tensor)
         
         # Remove batch dimension if needed

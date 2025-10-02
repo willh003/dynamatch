@@ -3,10 +3,12 @@ import mujoco
 import copy
 
 from scipy.optimize import minimize_scalar, minimize
-from envs.inverse.set_state import set_state
+from inverse.utils import set_state
 
-
-def get_ctrl_from_qfrc_actuator(qfrc_actuator, model, debug=False):
+def get_ctrl_from_applied_force(applied_force, model, debug=False):
+    """
+    Given an applied force (called qfrc_inverse if using mujoco.mj_inverse), recover the control inputs
+    """
 
     # Debug: print model structure
     if debug:
@@ -14,8 +16,8 @@ def get_ctrl_from_qfrc_actuator(qfrc_actuator, model, debug=False):
         print(f"Model nv (DOFs): {model.nv}")
         print(f"actuator_trnid shape: {model.actuator_trnid.shape}")
         print(f"actuator_gear shape: {model.actuator_gear.shape}")
-        print(f"qfrc_actuator shape: {qfrc_actuator.shape}")
-        print(f"qfrc_actuator shape: {qfrc_actuator.shape}")
+        print(f"qfrc_actuator shape: {applied_force.shape}")
+        print(f"qfrc_actuator shape: {applied_force.shape}")
         
     # The relationship is: qfrc_actuator = actuator_trnid.T @ (actuator_gear * ctrl)
     # So: ctrl = (qfrc_actuator @ pinv(actuator_trnid.T)) / actuator_gear
@@ -35,13 +37,14 @@ def get_ctrl_from_qfrc_actuator(qfrc_actuator, model, debug=False):
         print(f"actuator_force:\n{actuator_force}")
         
     # Use pseudoinverse (svd, basically least squares) to solve for ctrl
-    #ctrl, residuals, rank, s = np.linalg.lstsq(actuator_force, qfrc_actuator, rcond=None)
-    ctrl = np.linalg.pinv(actuator_force) @ qfrc_actuator
+    ctrl = np.linalg.pinv(actuator_force) @ applied_force
     
     if debug:
         print(f"Computed ctrl: {ctrl}")
     
     return ctrl
+
+
 
 def rk4_inverse_iterative(model, data_old, data_new, dt, qacc_initial_guess, max_iter=10, tol=1e-6):
     """
@@ -171,6 +174,102 @@ def inverse_acceleration_integration(model, data_old, data_new):
     return qacc_recovered
 
 
+def compare_fwd_inv(ctrl, model: mujoco.MjModel, data: mujoco.MjData) -> tuple[float, float]:
+    """
+    Compare forward and inverse dynamics without changing forward dynamics results.
+
+    Should be (0,0) when no constraints
+    
+    Returns:
+        fwdinv[0]: norm(qfrc_constraint(forward) - qfrc_constraint(inverse))
+        fwdinv[1]: norm(qfrc_applied(forward) - qfrc_inverse)
+    """
+    nv = model.nv
+    nefc = data.nefc
+    
+    # qforce = qfrc_applied + J'*xfrc_applied + qfrc_actuator
+    # qforce = data.qfrc_applied.copy() + data.qfrc_actuator.copy()
+    # mujoco.mj_xfrcAccumulate(model, data, qforce)
+
+    # qfrc_actuator and qacc are computed in mujoco.mj_forwardSkip. Set them to 0 explicitly here to make sure it's clear
+    data.qfrc_actuator[:] = 0 
+    data.qacc[:] = 0
+    data.ctrl[:] = ctrl
+    mujoco.mj_forwardSkip(model, data, mujoco.mjtStage.mjSTAGE_VEL, 1)
+    fwd_qacc = data.qacc.copy()
+    
+    
+    # NOTE: qfrc_applied and xfrc_applied are 0, so this is the same as qfrc_actuator
+    # Not sure why its in the mujoco codebase
+    qforce = data.qfrc_applied.copy() + data.qfrc_actuator.copy()
+    for i in range(model.nbody):
+        if np.any(data.xfrc_applied[i] != 0):
+            # Get Jacobian for this body
+            jacp = np.zeros((3, nv))
+            jacr = np.zeros((3, nv))
+            mj.mj_jacBody(model, data, jacp, jacr, i)
+            
+            # Accumulate: qforce += J' * xfrc
+            qforce += jacp.T @ data.xfrc_applied[i, 0:3]  # translational
+            qforce += jacr.T @ data.xfrc_applied[i, 3:6]  # rotational
+    
+    
+    # Save forward dynamics results that are about to be modified
+    fwd_qfrc_constraint = data.qfrc_constraint.copy()
+    fwd_efc_force = data.efc_force.copy()
+    
+    # Run inverse dynamics, skip position/velocity update
+    mujoco.mj_inverseSkip(model, data, mujoco.mjtStage.mjSTAGE_VEL, 1)
+    
+    # Compute statistics
+    dif_constraint = fwd_qfrc_constraint - data.qfrc_constraint
+    fwdinv_0 = np.linalg.norm(dif_constraint)
+    
+    dif_inverse = qforce - data.qfrc_inverse
+    fwdinv_1 = np.linalg.norm(dif_inverse)
+    
+    # Store results
+    data.solver_fwdinv[0] = fwdinv_0
+    data.solver_fwdinv[1] = fwdinv_1
+
+    ctrl_inv = get_ctrl_from_applied_force(data.qfrc_inverse, model)
+
+    return {
+        "qfrc_fwd": qforce,
+        "qfrc_inv": data.qfrc_inverse,
+        "qfrc_constraint_fwd": fwd_qfrc_constraint,
+        "qfrc_constraint_inv": data.qfrc_constraint,
+        "ctrl": ctrl,
+        "ctrl_inv": ctrl_inv,
+        "ctrl_error": np.linalg.norm(ctrl - ctrl_inv),
+        "qfrc_constraint_error": np.linalg.norm(fwd_qfrc_constraint - data.qfrc_constraint),
+        "qfrc_error": np.linalg.norm(qforce - data.qfrc_inverse),
+        "qacc": fwd_qacc,
+        "qpos": data.qpos,
+        "qvel": data.qvel,
+    }
+
+
+def qvel_from_qpos(model, qpos_prev, qpos_next, dt):
+    """
+    Compute generalized velocities from two generalized positions over dt.
+
+    Handles floating-base representations (free joint quaternion) correctly by
+    delegating to MuJoCo's differentiate routine.
+
+    Args:
+        model: mujoco.MjModel
+        qpos_prev: np.ndarray, shape (model.nq,)
+        qpos_next: np.ndarray, shape (model.nq,)
+        dt: float, timestep between the two positions
+
+    Returns:
+        np.ndarray with shape (model.nv,) representing generalized velocities.
+    """
+    qvel = np.zeros(model.nv, dtype=float)
+    mujoco.mj_differentiatePos(model, qvel, dt, qpos_prev, qpos_next)
+    return qvel
+
 def mujoco_inverse_dynamics(env, state_data, next_state_data, min_acc = -np.inf, max_acc = np.inf):
     """
     Given (state_data, next_state_data) from mujoco, compute the action that produced the next state
@@ -201,15 +300,15 @@ def mujoco_inverse_dynamics(env, state_data, next_state_data, min_acc = -np.inf,
     data.qacc[:] = acceleration    
     data.qacc[0] = np.clip(acceleration[0], min_acc, max_acc)
     data.qacc[1] = np.clip(acceleration[1], min_acc, max_acc)
-        
+
     mujoco.mj_inverse(model, data)
-
-    qfrc = data.qfrc_inverse
-
-    ctrl = get_ctrl_from_qfrc_actuator(qfrc, model)
-
-    return ctrl 
     
+    # https://www.roboti.us/forum/index.php?threads/3d-inverse-dynamics-on-experimental-data.3377/
+    applied_force = data.qfrc_inverse
+
+    ctrl = get_ctrl_from_applied_force(applied_force, model)
+    return ctrl 
+
 
 
 def estimate_velocity_fd(state, next_state):
@@ -228,17 +327,13 @@ def gym_inverse_dynamics(env, state, next_state, min_acc = -np.inf, max_acc = np
     - frame skip to be 1
 
     """ 
-    # assert env.unwrapped.model.opt.integrator == mujoco.mjtIntegrator.mjINT_EULER, "ERROR: integrators other than Euler are not supported"
-    # assert env.unwrapped.frame_skip == 1, "ERROR: frame skip other than 1 are not supported"
-    env.reset()
-    set_state(env, next_state)
-    mujoco.mj_forward(env.unwrapped.model, env.unwrapped.data)
-    next_data = copy.deepcopy(env.unwrapped.data)
-
     env.reset()
     set_state(env, state)
-    mujoco.mj_forward(env.unwrapped.model, env.unwrapped.data)
     data = copy.deepcopy(env.unwrapped.data)
 
-    next_data.qvel = (next_data.qpos - data.qpos) / env.unwrapped.dt
-    return mujoco_inverse_dynamics(env, data, next_data, min_acc, max_acc)
+    env.reset()
+    set_state(env, next_state)
+    next_data = copy.deepcopy(env.unwrapped.data)
+
+    id_action = mujoco_inverse_dynamics(env, data, next_data, min_acc, max_acc)
+    return id_action
