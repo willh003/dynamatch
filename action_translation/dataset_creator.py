@@ -72,6 +72,7 @@ def get_original_actions(train_set, state_keys, inverse_dynamics_env, max_sample
     states = []
     next_states = []
     
+    print("Processing dataset and relabeling using inverse dynamics")
     for i in tqdm(range(min(max_samples, len(train_set)))):
         seq = train_set[i]
 

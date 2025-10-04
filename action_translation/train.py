@@ -117,11 +117,8 @@ def train_action_translator(states, original_actions, shifted_actions,
             optimizer.zero_grad()
             
             # Forward pass: predict shifted action given state and original action
-            predicted_shifted_actions = model(batch_states, batch_original_actions)
-            
-            # Compute loss
-            loss = criterion(predicted_shifted_actions, batch_shifted_actions)
-            
+            loss = model(batch_states, batch_original_actions, batch_shifted_actions)
+                        
             # Backward pass
             loss.backward()
             optimizer.step()
@@ -154,11 +151,9 @@ def train_action_translator(states, original_actions, shifted_actions,
                 batch_shifted_actions = batch_shifted_actions.to(device)
                 
                 # Forward pass
-                predicted_shifted_actions = model(batch_states, batch_original_actions)
+                loss = model(batch_states, batch_original_actions, batch_shifted_actions)
                 
-                # Compute loss
-                loss = criterion(predicted_shifted_actions, batch_shifted_actions)
-                
+                                
                 epoch_val_loss += loss.item()
                 num_val_batches += 1
                 
