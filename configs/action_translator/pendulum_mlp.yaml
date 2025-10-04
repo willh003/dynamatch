@@ -1,0 +1,10 @@
+_target_: action_translation.SimpleActionTranslator
+action_dim: 1
+obs_dim: 4
+# Path to the trained action translator checkpoint
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/action_translator_model.pth 
+
+
+
+
+

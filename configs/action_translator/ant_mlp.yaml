@@ -1,0 +1,7 @@
+_target_: action_translation.SimpleActionTranslator
+action_dim: 8
+obs_dim: 107
+net_arch: [32, 32]
+# Path to the trained action translator checkpoint
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_high_friction/action_translator_model.pth
+

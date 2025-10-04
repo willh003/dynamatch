@@ -1,8 +1,6 @@
 import os
 import yaml
 import torch
-from hydra import initialize, compose
-from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 import sys
 
@@ -18,33 +16,49 @@ def count_parameters(model):
 
 
 def print_model_info(model):
-    """Print detailed information about the ActionTranslator model."""
-    base_policy_params = count_parameters(model.base_policy.policy)
-    action_translator_params = count_parameters(model.action_translator)
-    
-    print(f"\n=== Model Parameter Counts ===")
-    print(f"Base Policy Parameters: {base_policy_params:,}")
-    print(f"Action Translator Parameters: {action_translator_params:,}")
-    print(f"Total Parameters: {base_policy_params + action_translator_params:,}")
-    
-    # Detailed breakdown of action translator
-    print(f"\n--- Action Translator Architecture ---")
-    for name, module in model.action_translator.named_modules():
-        if len(list(module.children())) == 0:  # Leaf modules only
-            param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
-            if param_count > 0:
-                print(f"{name}: {param_count:,} parameters")
+    """Print detailed information about the model (PPO or ActionTranslator)."""
+    if hasattr(model, 'source_policy') and hasattr(model, 'action_translator'):
+        # ActionTranslatorSB3Policy
+        source_policy_params = count_parameters(model.source_policy.policy)
+        action_translator_params = count_parameters(model.action_translator)
+        
+        print(f"\n=== ActionTranslator Model Parameter Counts ===")
+        print(f"Base Policy Parameters: {source_policy_params:,}")
+        print(f"Action Translator Parameters: {action_translator_params:,}")
+        print(f"Total Parameters: {source_policy_params + action_translator_params:,}")
+        
+        # Detailed breakdown of action translator
+        print(f"\n--- Action Translator Architecture ---")
+        for name, module in model.action_translator.named_modules():
+            if len(list(module.children())) == 0:  # Leaf modules only
+                param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
+                if param_count > 0:
+                    print(f"{name}: {param_count:,} parameters")
+    else:
+        # PPO model
+        policy_params = count_parameters(model.policy)
+        
+        print(f"\n=== PPO Model Parameter Counts ===")
+        print(f"Policy Parameters: {policy_params:,}")
+        
+        # Detailed breakdown of policy
+        print(f"\n--- Policy Architecture ---")
+        for name, module in model.policy.named_modules():
+            if len(list(module.children())) == 0:  # Leaf modules only
+                param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
+                if param_count > 0:
+                    print(f"{name}: {param_count:,} parameters")
     
     print("=" * 40)
 
 
-def load_action_translator_from_config(config_path, base_policy_checkpoint=None, action_translator_checkpoint=None):
+def load_action_translator_from_config(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
     """
     Load an ActionTranslator from a config file.
     
     Args:
         config_path: Path to the translator config YAML file
-        base_policy_checkpoint: Override path to base policy checkpoint
+        source_policy_checkpoint: Override path to base policy checkpoint
         action_translator_checkpoint: Override path to action translator checkpoint
     
     Returns:
@@ -53,21 +67,29 @@ def load_action_translator_from_config(config_path, base_policy_checkpoint=None,
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
+    # Check if it's a Hydra config with defaults
+    if 'defaults' in config:
+        # Use OmegaConf to resolve the config
+        return load_action_translator_from_hydra_config_simple(
+            config_path, source_policy_checkpoint, action_translator_checkpoint
+        )
+    
+    # Direct config handling
     # Override checkpoint paths if provided
-    if base_policy_checkpoint:
-        config['base_policy']['checkpoint_path'] = base_policy_checkpoint
+    if source_policy_checkpoint:
+        config['source_policy']['checkpoint_path'] = source_policy_checkpoint
     if action_translator_checkpoint:
         config['action_translator']['checkpoint_path'] = action_translator_checkpoint
     
     # Create base policy
-    base_policy_config = config['base_policy'].copy()
-    checkpoint_path = base_policy_config.pop('checkpoint_path', None)
+    source_policy_config = config['source_policy'].copy()
+    checkpoint_path = source_policy_config.pop('checkpoint_path', None)
     
     if checkpoint_path is None:
         raise ValueError("Base policy checkpoint path must be provided either in config or as argument")
     
     # Load the base policy from checkpoint
-    base_policy = PPO.load(checkpoint_path)
+    source_policy = PPO.load(checkpoint_path)
     
     # Create action translator
     action_translator_config = config['action_translator'].copy()
@@ -100,12 +122,84 @@ def load_action_translator_from_config(config_path, base_policy_checkpoint=None,
     action_translator.eval()
     
     # Create the combined policy
-    combined_policy = ActionTranslatorSB3Policy(base_policy, action_translator)
+    combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
     
     return combined_policy
 
 
-def create_action_translator_from_hydra_config(config_path, base_policy_checkpoint=None, action_translator_checkpoint=None):
+def load_action_translator_from_hydra_config_simple(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
+    """
+    Simple method to load ActionTranslator from Hydra config by manually resolving defaults.
+    """
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Get the config directory to resolve relative paths
+    config_dir = os.path.dirname(config_path)
+    
+    # Load source policy config
+    source_policy_name = config['defaults'][0]['source_policy']
+    source_policy_config_path = os.path.join(config_dir, '..', 'source_policy', f'{source_policy_name}.yaml')
+    source_policy_config_path = os.path.normpath(source_policy_config_path)
+    
+    with open(source_policy_config_path, 'r') as f:
+        source_policy_config = yaml.safe_load(f)
+    
+    # Override checkpoint path if provided
+    if source_policy_checkpoint:
+        source_policy_config['checkpoint_path'] = source_policy_checkpoint
+    
+    # Load source policy
+    source_checkpoint_path = source_policy_config.get('checkpoint_path')
+    if source_checkpoint_path is None:
+        raise ValueError("Source policy checkpoint path must be provided")
+    
+    source_policy = PPO.load(source_checkpoint_path)
+    
+    # Load action translator config
+    action_translator_name = config['defaults'][1]['action_translator']
+    action_translator_config_path = os.path.join(config_dir, '..', 'action_translator', f'{action_translator_name}.yaml')
+    action_translator_config_path = os.path.normpath(action_translator_config_path)
+    
+    with open(action_translator_config_path, 'r') as f:
+        action_translator_config = yaml.safe_load(f)
+    
+    # Get checkpoint path before removing it from config
+    action_translator_checkpoint_path = action_translator_config.get('checkpoint_path')
+    if action_translator_checkpoint:
+        action_translator_checkpoint_path = action_translator_checkpoint
+    
+    # Remove Hydra-specific fields and checkpoint path
+    action_translator_config.pop('_target_', None)
+    action_translator_config.pop('checkpoint_path', None)
+    
+    # Validate dimensions
+    try:
+        action_dim = int(action_translator_config['action_dim'])
+        obs_dim = int(action_translator_config['obs_dim'])
+        action_translator_config['action_dim'] = action_dim
+        action_translator_config['obs_dim'] = obs_dim
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid dimensions in config: action_dim={action_translator_config.get('action_dim')}, obs_dim={action_translator_config.get('obs_dim')}. Error: {e}")
+    
+    # Create action translator
+    from action_translation import SimpleActionTranslator
+    action_translator = SimpleActionTranslator(**action_translator_config)
+    
+    # Load action translator weights
+    if action_translator_checkpoint_path is None:
+        raise ValueError("Action translator checkpoint path must be provided")
+    
+    action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
+    action_translator.eval()
+    
+    # Create combined policy
+    combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
+    
+    return combined_policy
+
+
+def load_action_translator_from_hydra_config(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
     """
     Alternative method using Hydra for more complex configs.
     This method is more robust for complex configurations.
@@ -122,43 +216,76 @@ def create_action_translator_from_hydra_config(config_path, base_policy_checkpoi
         cfg = compose(config_name=config_name)
         
         # Override checkpoint paths if provided
-        if base_policy_checkpoint:
-            cfg.base_policy.checkpoint_path = base_policy_checkpoint
+        if source_policy_checkpoint:
+            cfg.source_policy.checkpoint_path = source_policy_checkpoint
         if action_translator_checkpoint:
             cfg.action_translator.checkpoint_path = action_translator_checkpoint
         
         # Load base policy
-        base_policy_checkpoint_path = cfg.base_policy.checkpoint_path
-        if base_policy_checkpoint_path is None:
+        source_policy_checkpoint_path = cfg.source_policy.checkpoint_path
+        if source_policy_checkpoint_path is None:
             raise ValueError("Base policy checkpoint path must be provided")
         
-        base_policy = PPO.load(base_policy_checkpoint_path)
+        source_policy = PPO.load(source_policy_checkpoint_path)
         
         # Create and load action translator
-        action_translator_checkpoint_path = cfg.action_translator.checkpoint_path
+        from action_translation import SimpleActionTranslator
+        
+        # Get action translator config
+        action_translator_config = cfg.action_translator.copy()
+        action_translator_checkpoint_path = action_translator_config.pop('checkpoint_path', None)
+        
         if action_translator_checkpoint_path is None:
             raise ValueError("Action translator checkpoint path must be provided")
         
-        from action_translation import SimpleActionTranslator
+        # Remove Hydra-specific fields
+        action_translator_config.pop('_target_', None)
         
-        # Handle Hydra template variables - provide default values for pendulum environment
-        action_dim = cfg.action_translator.action_dim
-        obs_dim = cfg.action_translator.obs_dim
+        # Validate that we have integer dimensions
+        try:
+            action_dim = int(action_translator_config['action_dim'])
+            obs_dim = int(action_translator_config['obs_dim'])
+            action_translator_config['action_dim'] = action_dim
+            action_translator_config['obs_dim'] = obs_dim
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid dimensions in config: action_dim={action_translator_config.get('action_dim')}, obs_dim={action_translator_config.get('obs_dim')}. Error: {e}")
         
-        if isinstance(action_dim, str):
-            action_dim = 1  # Pendulum has 1D action space
-        if isinstance(obs_dim, str):
-            obs_dim = 4  # Pendulum has 4D observation space
-        
-        action_translator = SimpleActionTranslator(
-            action_dim=action_dim,
-            obs_dim=obs_dim
-        )
+        # Instantiate action translator
+        action_translator = SimpleActionTranslator(**action_translator_config)
         
         action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
         action_translator.eval()
         
         # Create combined policy
-        combined_policy = ActionTranslatorSB3Policy(base_policy, action_translator)
+        combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
         
         return combined_policy
+
+
+def load_source_policy_from_config(config_path, source_policy_checkpoint=None):
+    """
+    Load a source policy from a config file.
+    
+    Args:
+        config_path: Path to the source policy config YAML file
+        source_policy_checkpoint: Override path to source policy checkpoint
+    
+    Returns:
+        PPO policy instance
+    """
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Override checkpoint path if provided
+    if source_policy_checkpoint:
+        config['checkpoint_path'] = source_policy_checkpoint
+    
+    # Get checkpoint path
+    checkpoint_path = config.get('checkpoint_path')
+    if checkpoint_path is None:
+        raise ValueError("Source policy checkpoint path must be provided either in config or as argument")
+    
+    # Load the source policy from checkpoint
+    source_policy = PPO.load(checkpoint_path)
+    
+    return source_policy

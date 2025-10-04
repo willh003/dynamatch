@@ -1,0 +1,2 @@
+defaults:
+  - source_policy: pendulum_ppo

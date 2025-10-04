@@ -1,5 +1,6 @@
 import os
 import argparse
+import yaml
 from datetime import datetime
 
 import gymnasium as gym
@@ -21,8 +22,38 @@ from pathlib import Path
 import numpy as np
 import imageio.v2 as imageio
 from tqdm import tqdm
-from utils.model_utils import load_action_translator_from_config, print_model_info
+from utils.model_utils import load_action_translator_from_config, load_source_policy_from_config, print_model_info
+from omegaconf import OmegaConf
 from rl.collect_dataset import get_state_from_obs
+
+def resolve_hydra_config_and_get_source_checkpoint(config_path, source_policy_checkpoint=None):
+    """
+    Simple method to resolve a Hydra config and extract the source policy checkpoint path.
+    """
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Get the config directory to resolve relative paths
+        config_dir = os.path.dirname(config_path)
+        
+        # Load source policy config
+        source_policy_name = config['defaults'][0]['source_policy']
+        source_policy_config_path = os.path.join(config_dir, '..', 'source_policy', f'{source_policy_name}.yaml')
+        source_policy_config_path = os.path.normpath(source_policy_config_path)
+        
+        with open(source_policy_config_path, 'r') as f:
+            source_policy_config = yaml.safe_load(f)
+        
+        # Return checkpoint path (override if provided)
+        if source_policy_checkpoint:
+            return source_policy_checkpoint
+        else:
+            return source_policy_config.get('checkpoint_path')
+            
+    except Exception as e:
+        print(f"Warning: Could not resolve Hydra config: {e}")
+        return source_policy_checkpoint
 
 def plot_ankle_forces(all_mj_ankle_actuator, all_mj_ankle_constraint, 
                      all_mj_ankle_actuator_world, all_mj_ankle_constraint_world, 
@@ -231,7 +262,7 @@ def evaluate_policy(
                 # ActionTranslator returns (action, state) tuple
                 full_observation = get_state_from_obs(observation, info, env.spec.id)
 
-                actions, base_action = model.predict_base_and_translated(observation=observation, full_observation=full_observation, deterministic=deterministic)
+                actions, base_action = model.predict_base_and_translated(policy_observation=observation, translator_observation=full_observation, deterministic=deterministic)
             else:
                 # Regular PPO model
                 actions, _ = model.predict(observation=observation, deterministic=deterministic)
@@ -284,10 +315,10 @@ def evaluate_policy(
 
 
 def evaluate_and_record(
-    model_path: str = None,
-    translator_config_path: str = None,
+    translator_policy_config_path: str = None,
+    source_policy_config_path: str = None,
     env_id: str = "InvertedPendulum-v5",
-    base_policy_checkpoint: str = None,
+    source_policy_checkpoint: str = None,
     action_translator_checkpoint: str = None,
     env_kwargs: dict = {},
     run_dir: str | None = None,
@@ -301,9 +332,9 @@ def evaluate_and_record(
     Evaluate a policy (PPO or ActionTranslator) and record videos.
     
     Args:
-        model_path: Path to PPO model .zip file (for regular PPO models)
-        translator_config_path: Path to ActionTranslator config YAML file (for ActionTranslator models)
-        base_policy_checkpoint: Path to base policy checkpoint (overrides config for ActionTranslator)
+        translator_policy_config_path: Path to ActionTranslator config YAML file (for ActionTranslator models)
+        source_policy_config_path: Path to source policy config YAML file (for standalone source policies)
+        source_policy_checkpoint: Path to source policy checkpoint (overrides config checkpoint)
         action_translator_checkpoint: Path to action translator checkpoint (overrides config for ActionTranslator)
         env_id: Gymnasium environment ID
         env_kwargs: Environment keyword arguments
@@ -315,22 +346,47 @@ def evaluate_and_record(
         config: Additional configuration dict
     """
     # Determine model type and validate arguments
-    if model_path is not None and translator_config_path is not None:
-        raise ValueError("Cannot specify both model_path and translator_config_path. Choose one model type.")
-    elif model_path is None and translator_config_path is None:
-        raise ValueError("Must specify either model_path (for PPO) or translator_config_path (for ActionTranslator).")
+    model_types = [translator_policy_config_path, source_policy_config_path]
+    non_none_models = [m for m in model_types if m is not None]
     
-    is_action_translator = translator_config_path is not None
+    if len(non_none_models) > 1:
+        raise ValueError("Cannot specify multiple model types. Choose one: translator_policy_config_path or source_policy_config_path.")
+    elif len(non_none_models) == 0:
+        raise ValueError("Must specify one model type: translator_policy_config_path (for ActionTranslator) or source_policy_config_path (for standalone source policy).")
+    
+    is_action_translator = translator_policy_config_path is not None
+    is_source_policy = source_policy_config_path is not None
+    
+    # Determine source policy checkpoint path for video directory
+    source_checkpoint_path = None
+    if is_action_translator:
+        # For ActionTranslator, resolve the config to get the source policy checkpoint
+        source_checkpoint_path = resolve_hydra_config_and_get_source_checkpoint(
+            translator_policy_config_path, source_policy_checkpoint
+        )
+    elif is_source_policy:
+        # For source policy, load the config to get the checkpoint path
+        with open(source_policy_config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        source_checkpoint_path = config.get('checkpoint_path')
+        if source_policy_checkpoint:
+            source_checkpoint_path = source_policy_checkpoint
     
     if run_dir is not None:
         video_dir = os.path.join(run_dir, "videos")
-    else:
+    elif source_checkpoint_path:
+        # Extract directory from checkpoint path and create videos/eval/{env_id}-{time} subfolder
+        checkpoint_dir = os.path.dirname(os.path.dirname(source_checkpoint_path))
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_stamp = f"{env_id}-{run_stamp}"
         if is_action_translator:
-            # For ActionTranslator, use current directory as default
-            video_dir = "videos/eval"
-        else:
-            # For PPO, use model directory
-            video_dir = Path(model_path).parent.parent / "videos" / "eval"
+            run_stamp = f"{run_stamp}-action_translator"
+
+        video_dir = os.path.join(checkpoint_dir, "videos", "eval", run_stamp)
+    else:
+        # Fallback to current directory
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_dir = os.path.join("videos", "eval", f"{env_id}-{run_stamp}")
 
     os.makedirs(video_dir, exist_ok=True)
 
@@ -338,9 +394,8 @@ def evaluate_and_record(
     video_env = gym.make(env_id, render_mode="rgb_array", **env_kwargs)
     video_env = Monitor(video_env)
 
-    # Record every episode to a timestamped subfolder
-    run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    video_run_dir = os.path.join(video_dir, f"{env_id}_{run_stamp}")
+    # Record every episode to the video directory (already timestamped)
+    video_run_dir = video_dir
     video_env = RecordVideo(
         video_env,
         video_folder=video_run_dir,
@@ -353,18 +408,24 @@ def evaluate_and_record(
     if is_action_translator:
         print("Loading ActionTranslator model...")
         model = load_action_translator_from_config(
-            translator_config_path,
-            base_policy_checkpoint=base_policy_checkpoint,
+            translator_policy_config_path,
+            source_policy_checkpoint=source_policy_checkpoint,
             action_translator_checkpoint=action_translator_checkpoint
         )
         print("Model loaded successfully!")
         
         # Print parameter counts and model info
         print_model_info(model)
-    else:
-        print("Loading PPO model...")
-        model = PPO.load(model_path)
+    else:  # is_source_policy
+        print("Loading source policy from config...")
+        model = load_source_policy_from_config(
+            source_policy_config_path,
+            source_policy_checkpoint=source_policy_checkpoint
+        )
         print("Model loaded successfully!")
+        
+        # Print parameter counts and model info
+        print_model_info(model)
 
     # Quick quantitative evaluation (no video)
     eval_env = gym.make(env_id, **env_kwargs)
@@ -399,7 +460,7 @@ def evaluate_and_record(
                 # ActionTranslator returns (action, state) tuple
                 full_observation = get_state_from_obs(obs, info, env_id)
 
-                translated_action, base_action = model.predict_base_and_translated(observation=obs, full_observation=full_observation, deterministic=deterministic)
+                translated_action, base_action = model.predict_base_and_translated(policy_observation=obs, translator_observation=full_observation, deterministic=deterministic)
                 action_to_step = translated_action
                 all_actions.append(base_action)
                 all_translated_actions.append(translated_action)
@@ -449,9 +510,9 @@ def evaluate_and_record(
 
         # world are shape (N, 4, 3), and actuator are shape (N, 4)
         # Create plots for ankle forces
-        plot_ankle_forces(all_mj_ankle_actuator, all_mj_ankle_constraint, 
-                         all_mj_ankle_actuator_world, all_mj_ankle_constraint_world, 
-                         video_run_dir)
+        # plot_ankle_forces(all_mj_ankle_actuator, all_mj_ankle_constraint, 
+        #                  all_mj_ankle_actuator_world, all_mj_ankle_constraint_world, 
+        #                  video_run_dir)
     
     if is_action_translator:
         # ActionTranslator specific plotting
@@ -541,8 +602,8 @@ def parse_args():
     
     # Model selection (mutually exclusive)
     model_group = parser.add_mutually_exclusive_group(required=True)
-    model_group.add_argument("--model", help="Path to the trained PPO model .zip file")
-    model_group.add_argument("--translator_config", help="Path to the ActionTranslator config YAML file")
+    model_group.add_argument("--source_policy_config", help="Path to the source policy config YAML file")
+    model_group.add_argument("--translator_policy_config", help="Path to the ActionTranslator config YAML file")
     
     # Environment arguments
     parser.add_argument("--env_id", default="InvertedPendulum-v5", help="Gymnasium env id")
@@ -552,7 +613,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     
     # ActionTranslator specific arguments
-    parser.add_argument("--base_policy_checkpoint", help="Path to base policy checkpoint (overrides config for ActionTranslator)")
+    parser.add_argument("--source_policy_checkpoint", help="Path to base policy checkpoint (overrides config for ActionTranslator)")
     parser.add_argument("--action_translator_checkpoint", help="Path to action translator checkpoint (overrides config for ActionTranslator)")
     
     return parser.parse_args()
@@ -564,9 +625,9 @@ if __name__ == "__main__":
     register_custom_envs()
 
     evaluate_and_record(
-        model_path=args.model,
-        translator_config_path=args.translator_config,
-        base_policy_checkpoint=args.base_policy_checkpoint,
+        translator_policy_config_path=args.translator_policy_config,
+        source_policy_config_path=args.source_policy_config,
+        source_policy_checkpoint=args.source_policy_checkpoint,
         action_translator_checkpoint=args.action_translator_checkpoint,
         env_id=args.env_id,
         num_episodes=args.episodes,

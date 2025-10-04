@@ -1,0 +1,3 @@
+defaults:
+  - dataset: ant_high_friction
+  - action_translator: ant_mlp

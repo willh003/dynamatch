@@ -1,5 +1,0 @@
-defaults:
-  - dataset: pendulum
-  - policy: fp
-  - template_train
-  - _self_

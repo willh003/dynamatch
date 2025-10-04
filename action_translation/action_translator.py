@@ -8,23 +8,10 @@ from generative_policies.unet import UnetNoisePredictionNet
 from generative_policies.obs_encoder import IdentityObservationEncoder
 
 class ActionTranslatorSB3Policy:
-    def __init__(self, base_policy, action_translator):
-        self.base_policy = base_policy
+    def __init__(self, source_policy, action_translator):
+        self.source_policy = source_policy
         self.action_translator = action_translator
         self.translator = action_translator
-
-    def predict(
-        self,
-        observation: Union[np.ndarray, dict[str, np.ndarray]],
-        state: Optional[tuple[np.ndarray, ...]] = None,
-        episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
-    ):
-        """
-        Predict actions, following StableBaselines PolicyPredictor interface.
-        """ 
-        translated_action, _ = self.predict_base_and_translated(observation, state, episode_start, deterministic)
-        return translated_action, state
 
     def predict_base_and_translated(        
         self,
@@ -37,7 +24,7 @@ class ActionTranslatorSB3Policy:
         """
         Predict a base action and then translate it, returning both
         """
-        base_prediction = self.base_policy.predict(policy_observation, state, episode_start, deterministic)
+        base_prediction = self.source_policy.predict(policy_observation, state, episode_start, deterministic)
         # Extract just the action from the base policy prediction (which is a tuple of (action, state))
         base_action = base_prediction[0] if isinstance(base_prediction, tuple) else base_prediction
         translated_action = self.action_translator.predict(translator_observation, base_action)
