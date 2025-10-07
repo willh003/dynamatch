@@ -3,8 +3,7 @@ import torch.nn as nn
 from typing import Union, Optional
 import numpy as np
 
-from generative_policies.flow_policy import FlowPolicy
-from generative_policies.unet import UnetNoisePredictionNet
+from generative_policies.flow_model import ConditionalFlowModel
 from generative_policies.obs_encoder import IdentityObservationEncoder
 
 class ActionTranslatorSB3Policy:
@@ -35,11 +34,11 @@ class ActionTranslatorInterface(nn.Module):
     def __init__(self):
         super(ActionTranslatorInterface, self).__init__()
     
-    def sample(self, obs, action_prior):
+    def predict(self, obs, action_prior):
         """
-        Sample an action given the observation and the action_prior
+        Predict an action given the observation and the action_prior
         """
-        raise NotImplementedError("Subclasses must implement sample method")
+        raise NotImplementedError("Subclasses must implement predict method")
 
     def forward(self, obs, action_prior, action) -> torch.Tensor:
         """
@@ -47,8 +46,14 @@ class ActionTranslatorInterface(nn.Module):
         """
         raise NotImplementedError("Subclasses must implement forward method")
     
+    def to(self, device):
+        """
+        Move the model to the specified device
+        """
+        raise NotImplementedError("Subclasses must implement to method")
+    
 class SimpleActionTranslator(ActionTranslatorInterface):
-    def __init__(self, action_dim, obs_dim, net_arch=None):
+    def __init__(self, action_dim, obs_dim, device='cuda', net_arch=None):
         super(SimpleActionTranslator, self).__init__()
         self.action_dim = action_dim
         
@@ -67,67 +72,118 @@ class SimpleActionTranslator(ActionTranslatorInterface):
         layers.append(nn.Linear(prev_dim, action_dim))
         self.network = nn.Sequential(*layers)
 
+        self.to(device)
+
+    def to(self, device):
+        self.device = device
+        self.network.to(device)
+        return self
+
     def forward(self, obs, action_prior, action) -> torch.Tensor:
         """
         Compute the loss for a sampled batch of observations, action_priors, and actions.
         For SimpleActionTranslator, this computes MSE loss between predicted and target actions.
         """ 
         # Predict translated action given observation and action_prior
-        encoded_obs = self.obs_encoder(obs)
-        predicted_action = self.network(torch.cat([encoded_obs, action_prior], dim=-1))
+        cond = self.get_cond(obs, action_prior)
+        predicted_action = self.network(cond)
         # Compute MSE loss between predicted and target action
+        if len(action.shape) == 3:
+            action = action.squeeze(dim=1)
         loss = torch.nn.functional.mse_loss(predicted_action, action)
         return loss
-
-    def sample(self, obs, action_prior):
-        """
-        Sample an action given the observation and the action_prior.
-        For SimpleActionTranslator, this is deterministic prediction.
-        """
-        with torch.no_grad():
-
-            # Predict translated action
-            encoded_obs = self.obs_encoder(obs)
-            translated_action = self.network(torch.cat([encoded_obs, action_prior], dim=-1))
-            
-            return translated_action
-
+        
     def is_vectorized_observation(self, obs):
         return len(obs.shape) > 1
     
-    def predict(self, obs, action):
+    def predict(self, obs, action_prior):
         """Predict translated action given observation and original action."""
         with torch.no_grad():
-            obs_tensor = torch.FloatTensor(obs).unsqueeze(0) if len(obs.shape) == 1 else torch.FloatTensor(obs)
-            action_tensor = torch.FloatTensor(action).unsqueeze(0) if len(action.shape) == 1 else torch.FloatTensor(action)
+            cond = self.get_cond(obs, action_prior)
+            translated_action = self.network(cond)
 
-            translated_action = self.network(torch.cat([obs_tensor, action_tensor], dim=-1))
-        
         # Remove batch dimension if needed
         if not self.is_vectorized_observation(obs):
             translated_action = translated_action.squeeze(dim=0)  # type: ignore[assignment]
-        
-        
         return translated_action.cpu().numpy()
 
+    def get_cond(self, obs, action_prior):
+
+        with torch.no_grad():
+            encoded_obs = self.obs_encoder(obs)
+        
+        if type(encoded_obs) == np.ndarray:
+            encoded_obs = torch.FloatTensor(encoded_obs)
+        if type(action_prior) == np.ndarray:
+            action_prior = torch.FloatTensor(action_prior)
+        
+        if len(encoded_obs.shape) == 1:
+            encoded_obs = encoded_obs.unsqueeze(0)
+        elif len(encoded_obs.shape) == 3:
+            encoded_obs = encoded_obs.squeeze(dim=1)
+        
+        if len(action_prior.shape) == 1:
+            action_prior = action_prior.unsqueeze(0)
+        elif len(action_prior.shape) == 3:
+            action_prior = action_prior.squeeze(dim=1)
+
+        cond = torch.cat([encoded_obs, action_prior], dim=-1)
+        cond = cond.to(self.device)
+        return cond
 
 
 class FlowActionTranslator(ActionTranslatorInterface):
-    def __init__(self, action_dim, obs_dim):
+    def __init__(self,
+                action_dim, 
+                obs_dim,
+                diffusion_step_embed_dim=16,
+                down_dims=[16, 32, 64],
+                device='cuda'):
         super(FlowActionTranslator, self).__init__()
         self.action_dim = action_dim
-        obs_encoder = IdentityObservationEncoder(obs_dim)
-        noise_pred_net = UnetNoisePredictionNet(action_dim, global_cond_dim=obs_encoder.output_dim)
-        
-        self.flow_policy = FlowPolicy(obs_encoder, noise_pred_net)
+        self.obs_dim = obs_dim
+        self.obs_encoder = IdentityObservationEncoder(obs_dim)
+        self.flow_model = ConditionalFlowModel(target_dim=action_dim, 
+                                               cond_dim=obs_dim, 
+                                               diffusion_step_embed_dim=diffusion_step_embed_dim,
+                                               down_dims=down_dims,
+                                               )
+
+        self.to(device)
 
     def forward(self, obs, action_prior, action) -> torch.Tensor:
         """
         Compute the loss for a sampled batch of observations, action_priors, and actions.
         For FlowActionTranslator, this would need to be implemented based on the flow policy's loss function.
-        """
-        # This is a placeholder implementation - would need to be implemented based on flow policy
-        raise NotImplementedError("FlowActionTranslator forward method needs to be implemented based on flow policy loss")
+        """        
+        cond = self.obs_encoder(obs)
+        cond = self.inputs_to_torch(cond)
+        action_prior = self.inputs_to_torch(action_prior)
+        action = action.to(self.device)
+        loss = self.flow_model(target=action, condition=cond, prior_samples=action_prior, device=self.device)
+        return loss
 
-    def sample(self, obs, action_prior):
-        return self.flow_policy.sample(obs=obs, prior_sample=action_prior)
+    def predict(self, obs, action_prior, num_steps=100):
+        cond = self.obs_encoder(obs)
+        cond = self.inputs_to_torch(cond)
+        action_prior = self.inputs_to_torch(action_prior)
+        batch_size = obs.shape[0]
+        sample = self.flow_model.predict(batch_size=batch_size, 
+                                         condition=cond, 
+                                         prior_samples=action_prior,
+                                         num_steps=num_steps, 
+                                         device=self.device)
+        return sample.cpu().numpy()
+    
+    def inputs_to_torch(self, x):
+        if type(x) == np.ndarray:
+            x = torch.FloatTensor(x)
+        if type(x) == list:
+            x = torch.FloatTensor(x)
+        return x.to(self.device)
+
+    def to(self, device):
+        self.device = device
+        self.flow_model.to(device)
+        self.obs_encoder.to(device)
+        return self

@@ -3,6 +3,8 @@ import yaml
 import torch
 from omegaconf import OmegaConf
 import sys
+from hydra.utils import instantiate, get_class
+import inspect
 
 # Add parent directories to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -52,9 +54,60 @@ def print_model_info(model):
     print("=" * 40)
 
 
-def load_action_translator_from_config(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
+def build_action_translator_from_config(cfg_dict, obs_dim=None, action_dim=None, load_checkpoint=False):
     """
-    Load an ActionTranslator from a config file.
+    Instantiate an action translator from a YAML config using Hydra's instantiate.
+
+    Args:
+        cfg_dict: Dictionary containing the translator config
+        obs_dim: Optional override for observation dimension; if provided, overrides YAML
+        action_dim: Optional override for action dimension; if provided, overrides YAML
+        load_checkpoint: If True, tries to load 'checkpoint_path' weights if present
+
+    Returns:
+        nn.Module implementing ActionTranslatorInterface
+    """
+
+    # Pull out checkpoint path so it doesn't interfere with instantiation
+    checkpoint_path = cfg_dict.pop('checkpoint_path', None)
+
+    if '_target_' not in cfg_dict:
+        raise ValueError("Model config must specify '_target_' class path")
+
+    target_path = cfg_dict['_target_']
+
+    # Introspect target class __init__ to filter kwargs (drop e.g. 'name')
+    try:
+        target_cls = get_class(target_path)
+    except Exception as e:
+        raise ImportError(f"Failed to resolve target '{target_path}': {e}")
+
+    init_params = set(inspect.signature(target_cls.__init__).parameters.keys())
+    init_params.discard('self')
+
+    # Allow overrides for dims from data
+    if action_dim is not None:
+        cfg_dict['action_dim'] = int(action_dim)
+    if obs_dim is not None:
+        cfg_dict['obs_dim'] = int(obs_dim)
+
+    # Keep only keys accepted by the constructor plus '_target_'
+    filtered_cfg = {k: v for k, v in cfg_dict.items() if k == '_target_' or k in init_params}
+
+    # Convert to OmegaConf and instantiate via Hydra
+    cfg = OmegaConf.create(filtered_cfg)
+    model = instantiate(cfg, _convert_='all')
+
+    if load_checkpoint and checkpoint_path and os.path.isfile(checkpoint_path):
+        state_dict = torch.load(checkpoint_path, map_location='cpu')
+        model.load_state_dict(state_dict, strict=False)
+        print(f"Loaded weights from checkpoint: {checkpoint_path}")
+
+    return model
+
+def load_action_translator_policy_from_config(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
+    """
+    Load an ActionTranslator policy from a config file.
     
     Args:
         config_path: Path to the translator config YAML file

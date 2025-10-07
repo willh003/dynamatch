@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import imageio.v2 as imageio
 from tqdm import tqdm
-from utils.model_utils import load_action_translator_from_config, load_source_policy_from_config, print_model_info
+from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config, print_model_info
 from omegaconf import OmegaConf
 from rl.collect_dataset import get_state_from_obs
 
@@ -407,7 +407,7 @@ def evaluate_and_record(
     # Load model based on type
     if is_action_translator:
         print("Loading ActionTranslator model...")
-        model = load_action_translator_from_config(
+        model = load_action_translator_policy_from_config(
             translator_policy_config_path,
             source_policy_checkpoint=source_policy_checkpoint,
             action_translator_checkpoint=action_translator_checkpoint

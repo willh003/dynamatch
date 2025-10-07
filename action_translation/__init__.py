@@ -1,1 +1,2 @@
-from .action_translator import ActionTranslatorSB3Policy, SimpleActionTranslator
+from .action_translator import ActionTranslatorSB3Policy, SimpleActionTranslator, FlowActionTranslator
+

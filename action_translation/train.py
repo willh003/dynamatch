@@ -9,10 +9,9 @@ import zarr
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import wandb
-from action_translator import SimpleActionTranslator
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
+from utils.model_utils import build_action_translator_from_config
 
 # Removed unused import: from utils.model_utils import print_model_info
 
@@ -40,8 +39,8 @@ def load_action_translation_dataset(dataset_path):
 
 def train_action_translator(states, original_actions, shifted_actions, 
                           obs_dim, action_dim, num_epochs=100, learning_rate=1e-3, 
-                          batch_size=64, device='cpu', val_split=0.2):
-    """Train the SimpleActionTranslator model."""
+                          batch_size=64, device='cpu', val_split=0.2, model=None):
+    """Train the Action Translator model."""
     print("=== Training Action Translator ===")
     
     # Convert to tensors
@@ -71,9 +70,7 @@ def train_action_translator(states, original_actions, shifted_actions,
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     print(f"Train samples: {train_size}, Validation samples: {val_size}")
-    
-    # Initialize model
-    model = SimpleActionTranslator(action_dim, obs_dim)
+
     model.to(device)
     
     # Print model info
@@ -117,7 +114,10 @@ def train_action_translator(states, original_actions, shifted_actions,
             optimizer.zero_grad()
             
             # Forward pass: predict shifted action given state and original action
-            loss = model(batch_states, batch_original_actions, batch_shifted_actions)
+            loss = model(obs=batch_states, 
+                        action_prior=batch_original_actions,
+                        action=batch_shifted_actions)
+                         
                         
             # Backward pass
             loss.backward()
@@ -202,18 +202,22 @@ def create_output_path_from_config(config_path):
     
     return output_path
 
-
-def create_model_path_from_data_path(data_path):
+def create_model_path_from_data_path(model_config_path, data_path):
     """Create model output path based on config path."""
+    with open(model_config_path, 'r', encoding='utf-8') as f:
+        model_config = yaml.safe_load(f)
+    model_name = model_config['name']
     output_dir = os.path.dirname(data_path)
-    model_path = os.path.join(output_dir, 'action_translator_model.pth')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_translator.pth')
     return model_path
-
 
 def main():
     parser = argparse.ArgumentParser(description='Train action translator from action translation dataset')
     parser.add_argument('--dataset_config', type=str, required=True,
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
+    parser.add_argument('--model_config', type=str, default=None,
+                       help='Path to model config YAML file (e.g., dynamics/configs/action_translator/ant_mlp.yaml)')
     parser.add_argument('--num_epochs', type=int, default=100,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
@@ -249,7 +253,7 @@ def main():
     
     # Create paths based on config
     dataset_path = create_output_path_from_config(args.dataset_config)
-    model_output_path = create_model_path_from_data_path(dataset_path)
+    model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'action_distributions.png')
     
     print(f"Dataset path: {dataset_path}")
@@ -263,11 +267,17 @@ def main():
     obs_dim = states.shape[1]
     action_dim = original_actions.shape[1]
     
+    # Optionally build model from config for flexible architectures
+    model_from_config = None
+    if args.model_config is not None:
+        print(f"Building action translator from model config: {args.model_config}")
+        model_from_config = build_action_translator_from_config(args.model_config, obs_dim, action_dim, load_checkpoint=False)
+
     # Train action translator
     model, train_losses, val_losses = train_action_translator(
         states, original_actions, shifted_actions,
         obs_dim, action_dim, args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split
+        args.batch_size, args.device, args.val_split, model=model_from_config
     )
     
     # Save trained model
