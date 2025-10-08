@@ -22,7 +22,6 @@ def test_gaussian(model_config, test_name):
     model_from_config = build_action_translator_from_config(cfg_dict)
 
     num_samples = 1000
-    num_inference_steps = cfg_dict['num_inference_steps']
 
     states = np.ones((num_samples, 2))
     original_actions = np.random.randn(num_samples, 2)
@@ -64,7 +63,7 @@ def test_gaussian(model_config, test_name):
     model.eval()
     with torch.inference_mode():
         
-        translated_actions = model.predict(states_eval, original_actions_eval, num_steps=num_inference_steps)
+        translated_actions = model.predict(states_eval, original_actions_eval)
     
     states_to_plot = states_eval.squeeze()  
     original_actions_to_plot = original_actions_eval.squeeze()

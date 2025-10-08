@@ -121,6 +121,7 @@ class FlowActionPriorTranslator(ActionTranslatorInterface):
                 obs_dim,
                 diffusion_step_embed_dim=16,
                 down_dims=[16, 32, 64],
+                num_inference_steps=100,
                 device='cuda'):
         super(FlowActionPriorTranslator, self).__init__()
         self.action_dim = action_dim
@@ -131,6 +132,7 @@ class FlowActionPriorTranslator(ActionTranslatorInterface):
                                                diffusion_step_embed_dim=diffusion_step_embed_dim,
                                                down_dims=down_dims,
                                                )
+        self.num_inference_steps = num_inference_steps
 
         self.to(device)
 
@@ -145,14 +147,14 @@ class FlowActionPriorTranslator(ActionTranslatorInterface):
         loss = self.flow_model(target=action, condition=cond, prior_samples=action_prior, device=self.device)
         return loss
 
-    def predict(self, obs, action_prior, num_steps=100):
+    def predict(self, obs, action_prior):
         cond = self.obs_encoder(obs)
         action_prior = self.action_encoder(action_prior)
         batch_size = obs.shape[0]
         sample = self.flow_model.predict(batch_size=batch_size, 
                                          condition=cond, 
                                          prior_samples=action_prior,
-                                         num_steps=num_steps, 
+                                         num_steps=self.num_inference_steps, 
                                          device=self.device)
         return sample.cpu().numpy()
 
@@ -174,13 +176,14 @@ class FlowActionConditionedTranslator(ActionTranslatorInterface):
                 obs_dim,
                 diffusion_step_embed_dim=16,
                 down_dims=[16, 32, 64],
+                num_inference_steps=100,
                 device='cuda'):
         super(FlowActionConditionedTranslator, self).__init__()
         self.action_dim = action_dim
         self.obs_dim = obs_dim
         self.cond_encoder = IdentityObservationActionEncoder(obs_dim, action_dim, device=device)
         self.action_encoder = IdentityObservationEncoder(action_dim, device=device)
-        
+        self.num_inference_steps = num_inference_steps
         action_prior = GaussianPrior(action_dim)
         self.flow_model = ConditionalFlowModel(target_dim=action_dim, 
                                                cond_dim=self.cond_encoder.output_dim, 
@@ -201,12 +204,12 @@ class FlowActionConditionedTranslator(ActionTranslatorInterface):
         loss = self.flow_model(target=action, condition=cond, device=self.device)
         return loss
 
-    def predict(self, obs, action_prior, num_steps=100):
+    def predict(self, obs, action_prior):
         cond = self.cond_encoder(obs, action_prior)
         batch_size = cond.shape[0]
         sample = self.flow_model.predict(batch_size=batch_size, 
                                          condition=cond, 
-                                         num_steps=num_steps, 
+                                         num_steps=self.num_inference_steps, 
                                          device=self.device)
         return sample.cpu().numpy()
 
@@ -230,8 +233,9 @@ class FlowActionPriorConditionedTranslator(FlowActionConditionedTranslator):
                 obs_dim,
                 diffusion_step_embed_dim=16,
                 down_dims=[16, 32, 64],
+                num_inference_steps=100,
                 device='cuda'):
-        super().__init__(action_dim, obs_dim, diffusion_step_embed_dim, down_dims, device)
+        super().__init__(action_dim, obs_dim, diffusion_step_embed_dim, down_dims, num_inference_steps, device)
 
     def forward(self, obs, action_prior, action) -> torch.Tensor:
         """
@@ -244,13 +248,13 @@ class FlowActionPriorConditionedTranslator(FlowActionConditionedTranslator):
         loss = self.flow_model(target=action, condition=cond, prior_samples=action_prior, device=self.device)
         return loss
 
-    def predict(self, obs, action_prior, num_steps=100):
+    def predict(self, obs, action_prior):
         cond = self.cond_encoder(obs, action_prior)
         action_prior = self.action_encoder(action_prior)
         batch_size = cond.shape[0]
         sample = self.flow_model.predict(batch_size=batch_size, 
                                          condition=cond, 
                                          prior_samples=action_prior,
-                                         num_steps=num_steps, 
+                                         num_steps=self.num_inference_steps, 
                                          device=self.device)
         return sample.cpu().numpy()

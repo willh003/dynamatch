@@ -466,9 +466,15 @@ def evaluate_and_record(
                 full_observation = get_state_from_obs(obs, info, env_id)
 
                 translated_action, base_action = model.predict_base_and_translated(policy_observation=obs, translator_observation=full_observation, deterministic=deterministic)
-                action_to_step = translated_action
+                
+                if len(translated_action.shape) > 1:
+                    base_action = base_action[0]
+                    translated_action = translated_action[0]
+                    
                 all_actions.append(base_action)
                 all_translated_actions.append(translated_action)
+
+                action_to_step = translated_action
             else:
                 # Regular PPO model
                 action, _ = model.predict(obs, deterministic=deterministic)
