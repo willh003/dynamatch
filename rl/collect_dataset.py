@@ -89,7 +89,7 @@ def parse_raw_observations(obs_array: np.ndarray, info:dict, obs_shape_meta: Dic
     """
     Parse raw observation array into dictionary format expected by the dataset.
     """
-    if "theta" in obs_shape_meta:
+    if "cart_position" in obs_shape_meta:
         # TODO: better check for env type
         return parse_raw_observations_pendulum(obs_array, obs_shape_meta)
     else:
@@ -372,7 +372,7 @@ def collect_dataset(config_path: str) -> str:
     env_kwargs = config.get('env_kwargs', None)
     num_episodes = config.get('num_episodes', 100)
     max_steps_per_episode = config.get('max_steps_per_episode', 1000)
-    deterministic = config.get('deterministic', True)
+    deterministic = config.get('deterministic', False)
     seed = config.get('seed', None)
     append = config.get('append', False)
     
@@ -433,6 +433,21 @@ def collect_dataset(config_path: str) -> str:
     plt.savefig(os.path.join(plot_path, "collected_rewards_dist.png"))
     plt.clf()
 
+    # Plot actions over the course of the first episode for pendulum environments
+    if "pendulum" in env_id.lower():
+        if len(actions_list) > 0:
+            first_episode_actions = actions_list[0]
+            plt.figure(figsize=(10, 6))
+            plt.plot(first_episode_actions, 'b-', linewidth=2, label='Actions')
+            plt.xlabel('Time Step')
+            plt.ylabel('Action Value')
+            plt.title(f'Actions over First Episode - {env_id}')
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(plot_path, "first_episode_actions.png"), dpi=150, bbox_inches='tight')
+            plt.clf()
+            print(f"Saved first episode actions plot to: {os.path.join(plot_path, 'first_episode_actions.png')}")
 
     return saved_path
 

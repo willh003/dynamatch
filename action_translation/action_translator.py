@@ -19,7 +19,7 @@ class ActionTranslatorSB3Policy:
         translator_observation: Optional[dict[str, np.ndarray]] = None,
         state: Optional[tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
+        deterministic: bool = True,
         ):
         """
         Predict a base action and then translate it, returning both

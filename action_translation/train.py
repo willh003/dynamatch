@@ -267,7 +267,7 @@ def main():
         }
     train_config_dict.update(model_config_dict)
     exp_name = train_config_dict['name']
-    wandb_tags = [exp_name]
+    wandb_tags = [exp_name, 'translator']
     config_name = os.path.splitext(os.path.basename(args.dataset_config))[0]
     wandb.init(
         project="dynamics",

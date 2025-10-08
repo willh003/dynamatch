@@ -2,18 +2,15 @@ import argparse
 import os
 import yaml
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import zarr
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import wandb
 import sys
 import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from utils.model_utils import build_action_translator_from_config
-from learned_inverse_dynamics import FlowInverseDynamics
+from utils.model_utils import load_inverse_dynamics_model_from_config
 
 
 def load_inverse_dynamics_dataset(dataset_path):
@@ -38,7 +35,7 @@ def load_inverse_dynamics_dataset(dataset_path):
 
 
 def train_inverse_dynamics(states, actions, next_states, model, 
-                          obs_dim, action_dim, num_epochs=100, learning_rate=1e-3, 
+                          num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2):
     """Train the Inverse Dynamics model."""
     print("=== Training Inverse Dynamics ===")
@@ -193,7 +190,7 @@ def create_output_path_from_config(config_path):
     
     buffer_path = config['buffer_path']
     # Replace 'sequence' with 'inverse_dynamics' in the path
-    output_path = buffer_path.replace('/sequence/', '/inverse_dynamics/')
+    output_path = buffer_path.replace('/sequence/', '/transitions/')
     
     return output_path
 
@@ -209,39 +206,13 @@ def create_model_path_from_data_path(model_config_path, data_path):
     return model_path
 
 
-def build_inverse_dynamics_from_config(cfg_dict, obs_dim=None, action_dim=None):
-    """Build inverse dynamics model from config."""
-    # For now, we'll use FlowInverseDynamics as the default
-    # In the future, this could be extended to support different architectures
-    
-    if obs_dim is None or action_dim is None:
-        raise ValueError("obs_dim and action_dim must be provided")
-    
-    # Extract parameters from config
-    diffusion_step_embed_dim = cfg_dict.get('diffusion_step_embed_dim', 16)
-    down_dims = cfg_dict.get('down_dims', [16, 32, 64])
-    num_inference_steps = cfg_dict.get('num_inference_steps', 100)
-    device = cfg_dict.get('device', 'cuda')
-    
-    model = FlowInverseDynamics(
-        action_dim=action_dim,
-        obs_dim=obs_dim,
-        diffusion_step_embed_dim=diffusion_step_embed_dim,
-        down_dims=down_dims,
-        num_inference_steps=num_inference_steps,
-        device=device
-    )
-    
-    return model
-
-
 def main():
     parser = argparse.ArgumentParser(description='Train inverse dynamics model from inverse dynamics dataset')
     parser.add_argument('--dataset_config', type=str, required=True,
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--model_config', type=str, required=True,
                        help='Path to model config YAML file (e.g., dynamics/configs/inverse_dynamics/ant_flow.yaml)')
-    parser.add_argument('--num_epochs', type=int, default=100,
+    parser.add_argument('--num_epochs', type=int, default=400,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                        help='Learning rate')
@@ -267,18 +238,14 @@ def main():
     
     # Load inverse dynamics dataset
     states, actions, next_states = load_inverse_dynamics_dataset(dataset_path)
-    
-    # Determine dimensions from data
-    obs_dim = states.shape[1]
-    action_dim = actions.shape[1]
+
     
     # Build model from config
     print(f"Building inverse dynamics model from model config: {args.model_config}")
-    # Load the YAML config first
+    model_from_config = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=False)
+
     with open(args.model_config, 'r', encoding='utf-8') as f:
         model_config_dict = yaml.safe_load(f)
-    model_from_config = build_inverse_dynamics_from_config(model_config_dict, obs_dim, action_dim)
-
     train_config_dict = {
             "num_epochs": args.num_epochs,
             "learning_rate": args.learning_rate,
@@ -289,7 +256,7 @@ def main():
         }
     train_config_dict.update(model_config_dict)
     exp_name = train_config_dict['name']
-    wandb_tags = [exp_name]
+    wandb_tags = [exp_name, 'id']
     config_name = os.path.splitext(os.path.basename(args.dataset_config))[0]
     wandb.init(
         project="dynamics",
@@ -303,13 +270,14 @@ def main():
     # Train inverse dynamics model
     model, train_losses, val_losses = train_inverse_dynamics(
         states, actions, next_states, model_from_config,
-        obs_dim, action_dim, args.num_epochs, args.learning_rate, 
+        args.num_epochs, args.learning_rate, 
         args.batch_size, args.device, args.val_split
     )
     
     # Save trained model
     torch.save(model.state_dict(), model_output_path)
     print(f"Trained model saved to {model_output_path}")
+    print(f"Final training loss: {train_losses[-1]:.6f}, Final validation loss: {val_losses[-1]:.6f}")
     
     # Finish wandb run
     wandb.finish()

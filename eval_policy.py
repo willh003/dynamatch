@@ -328,7 +328,7 @@ def evaluate_and_record(
     run_dir: str | None = None,
     num_episodes: int = 5,
     max_steps_per_episode: int = 1000,
-    deterministic: bool = False,
+    deterministic: bool = True,
     seed: int | None = None,
     config: dict = None,
 ):
@@ -561,7 +561,7 @@ def parse_args():
     parser.add_argument("--env_id", default="InvertedPendulum-v5", help="Gymnasium env id")
     parser.add_argument("--episodes", type=int, default=32, help="Number of episodes to eval (max 5 video recorded)")
     parser.add_argument("--max_steps", type=int, default=1000, help="Max steps per episode")
-    parser.add_argument("--deterministic", action="store_true", default=False, help="Use deterministic actions instead of deterministic")
+    parser.add_argument("--deterministic", action="store_true", default=True, help="Use deterministic actions instead of stochastic")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     
     # ActionTranslator specific arguments

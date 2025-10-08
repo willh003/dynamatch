@@ -258,3 +258,48 @@ def load_source_policy_from_config(config_path, source_policy_checkpoint=None):
     source_policy = PPO.load(checkpoint_path)
     
     return source_policy
+
+
+def load_inverse_dynamics_model_from_config(config_path, load_checkpoint=False):
+    """
+    Load inverse dynamics model from config file.
+    
+    Args:
+        config_path: Path to model config YAML file
+        load_checkpoint: If True, loads the checkpoint from the config
+    
+    Returns:
+        Loaded inverse dynamics model
+    """
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    # Import the model class
+    target_path = config['_target_']
+    module_path, class_name = target_path.rsplit('.', 1)
+    
+    # Import the module and get the class
+    module = __import__(module_path, fromlist=[class_name])
+    model_class = getattr(module, class_name)
+    
+    # Introspect target class __init__ to filter kwargs (drop e.g. 'checkpoint_path')
+    init_params = set(inspect.signature(model_class.__init__).parameters.keys())
+    init_params.discard('self')
+    
+    # Get model parameters from config, filtering out unused ones
+    model_params = {k: v for k, v in config.items() if k in init_params}
+    
+    # Create model instance
+    model = model_class(**model_params)
+    
+    # Load checkpoint if provided
+    if load_checkpoint:
+        checkpoint_path = config.get('checkpoint_path')
+        assert os.path.exists(checkpoint_path), f"Checkpoint path {checkpoint_path} does not exist"
+        
+        state_dict = torch.load(checkpoint_path, map_location='cpu')
+        model.load_state_dict(state_dict)
+        print(f"Loaded model from checkpoint: {checkpoint_path}")
+    
+    
+    return model

@@ -1,6 +1,11 @@
-name: "pendulum_flow_inverse_dynamics"
-_target_: "dynamics.inverse.learned_inverse_dynamics.FlowInverseDynamics"
+_target_: inverse.learned_inverse_dynamics.FlowInverseDynamics
+name: pendulum_flow_id
+action_dim: 1
+obs_dim: 4
+
 diffusion_step_embed_dim: 16
-down_dims: [16, 32, 64]
-num_inference_steps: 100
-device: "cuda"
+down_dims: [16, 32]
+num_inference_steps: 10
+
+
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable/pendulum_flow_id_20251008_142909_inverse_dynamics.pth
