@@ -1,4 +1,4 @@
-_target_: action_translation.FlowActionPriorConditionedTranslator
+_target_: generative_policies.action_translation.FlowActionPriorConditionedTranslator
 name: pendulum_flow
 action_dim: 1 
 obs_dim: 4

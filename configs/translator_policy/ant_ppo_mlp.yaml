@@ -2,4 +2,4 @@ defaults:
   - source_policy: ant_ppo_5M
   - action_translator: ant_mlp
 
-_target_: action_translation.ActionTranslatorSB3Policy
+_target_: generative_policies.action_translation.ActionTranslatorPolicy

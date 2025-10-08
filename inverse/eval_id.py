@@ -99,6 +99,7 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, device='cp
         state = states[i]
         next_state = next_states[i]
         true_action = true_actions[i]
+
         
         # Learned inverse dynamics
         with torch.no_grad():
@@ -107,6 +108,8 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, device='cp
             
             predicted_action = learned_model.predict(state_tensor, next_state_tensor)
             predicted_action = predicted_action[0]  # Remove batch dimension
+
+        breakpoint()
         
         learned_error = np.linalg.norm(predicted_action - true_action)
         learned_errors.append(learned_error)

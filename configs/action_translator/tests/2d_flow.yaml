@@ -1,4 +1,4 @@
-_target_: action_translation.FlowActionPriorTranslator
+_target_: generative_policies.action_translation.FlowActionPriorTranslator
 name: 2d_flow
 action_dim: 2
 obs_dim: 2

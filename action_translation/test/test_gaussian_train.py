@@ -6,9 +6,9 @@ import torch
 import yaml
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from action_translation.train import train_action_translator
+from generative_policies.action_translation.train import train_action_translator
 from utils.model_utils import build_action_translator_from_config
-from generative_policies.flow_model import ConditionalFlowModel 
+from generative_policies.models.flow_model import ConditionalFlowModel 
 
 
 

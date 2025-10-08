@@ -62,6 +62,7 @@ def get_inverse_dynamics_data(train_set, state_keys, max_samples=None):
     
     print("Processing dataset to extract (s, a, s') triplets")
     for i in tqdm(range(min(max_samples, len(train_set)))):
+        
         seq = train_set[i]
 
         action = seq['action'][0]        

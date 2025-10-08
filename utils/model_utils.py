@@ -7,12 +7,12 @@ from hydra.utils import instantiate, get_class
 from hydra.core.global_hydra import GlobalHydra
 from hydra import initialize, compose
 import inspect
+from generative_policies.action_translation import ActionTranslatorPolicy
+from stable_baselines3 import PPO
+
 
 # Add parent directories to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from action_translation import ActionTranslatorSB3Policy
-from stable_baselines3 import PPO
-
 
 def count_parameters(model):
     """Count the number of trainable parameters in a model."""
@@ -22,7 +22,7 @@ def count_parameters(model):
 def print_model_info(model):
     """Print detailed information about the model (PPO or ActionTranslator)."""
     if hasattr(model, 'source_policy') and hasattr(model, 'action_translator'):
-        # ActionTranslatorSB3Policy
+        # ActionTranslatorPolicy
         source_policy_params = count_parameters(model.source_policy.policy)
         action_translator_params = count_parameters(model.action_translator)
         
@@ -117,7 +117,7 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
         action_translator_checkpoint: Override path to action translator checkpoint
     
     Returns:
-        ActionTranslatorSB3Policy instance
+        ActionTranslatorPolicy instance
     """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -164,7 +164,7 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
     action_translator.eval()
     
     # Create the combined policy
-    combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
+    combined_policy = ActionTranslatorPolicy(source_policy, action_translator)
     
     return combined_policy
 
@@ -226,7 +226,7 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     action_translator.eval()
     
     # Create combined policy
-    combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
+    combined_policy = ActionTranslatorPolicy(source_policy, action_translator)
     
     return combined_policy
 

@@ -1,4 +1,4 @@
-_target_: action_translation.SimpleActionTranslator
+_target_: generative_policies.action_translation.MlpActionTranslator
 name: 1d_mlp
 action_dim: 1
 obs_dim: 1
