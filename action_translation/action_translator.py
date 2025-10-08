@@ -4,7 +4,7 @@ from typing import Union, Optional
 import numpy as np
 
 from generative_policies.flow_model import ConditionalFlowModel
-from generative_policies.obs_encoder import IdentityObservationEncoder, IdentityObservationActionEncoder
+from generative_policies.obs_encoder import IdentityEncoder, IdentityTwoInputEncoder
 from generative_policies.prior import GaussianPrior
 
 class ActionTranslatorSB3Policy:
@@ -58,7 +58,7 @@ class SimpleActionTranslator(ActionTranslatorInterface):
     def __init__(self, action_dim, obs_dim, device='cuda', net_arch=None):
         super(SimpleActionTranslator, self).__init__()
         self.action_dim = action_dim
-        self.cond_encoder = IdentityObservationActionEncoder(obs_dim, action_dim, device=device)
+        self.cond_encoder = IdentityTwoInputEncoder(input_1_dim=obs_dim, input_2_dim=action_dim, device=device)
 
         in_feat_dim = self.cond_encoder.output_dim
         # Default to two hidden layers of 32 units each for backward compatibility
@@ -88,6 +88,7 @@ class SimpleActionTranslator(ActionTranslatorInterface):
         """ 
         # Predict translated action given observation and action_prior
         cond = self.cond_encoder(obs, action_prior)
+
         predicted_action = self.network(cond)
         # Compute MSE loss between predicted and target action
         if len(action.shape) == 3:
@@ -126,7 +127,7 @@ class FlowActionPriorTranslator(ActionTranslatorInterface):
         super(FlowActionPriorTranslator, self).__init__()
         self.action_dim = action_dim
         self.obs_dim = obs_dim
-        self.obs_encoder = IdentityObservationEncoder(obs_dim, device=device)
+        self.obs_encoder = IdentityEncoder(obs_dim, device=device)
         self.flow_model = ConditionalFlowModel(target_dim=action_dim, 
                                                cond_dim=self.obs_encoder.output_dim, 
                                                diffusion_step_embed_dim=diffusion_step_embed_dim,
@@ -162,7 +163,6 @@ class FlowActionPriorTranslator(ActionTranslatorInterface):
         self.device = device
         self.flow_model.to(device)
         self.obs_encoder.to(device)
-        self.action_encoder.to(device)
         return self
 
 
@@ -181,9 +181,11 @@ class FlowActionConditionedTranslator(ActionTranslatorInterface):
         super(FlowActionConditionedTranslator, self).__init__()
         self.action_dim = action_dim
         self.obs_dim = obs_dim
-        self.cond_encoder = IdentityObservationActionEncoder(obs_dim, action_dim, device=device)
-        self.action_encoder = IdentityObservationEncoder(action_dim, device=device)
         self.num_inference_steps = num_inference_steps
+
+        self.cond_encoder = IdentityTwoInputEncoder(obs_dim, action_dim, device=device)
+        self.action_encoder = IdentityEncoder(action_dim, device=device)
+        
         action_prior = GaussianPrior(action_dim)
         self.flow_model = ConditionalFlowModel(target_dim=action_dim, 
                                                cond_dim=self.cond_encoder.output_dim, 

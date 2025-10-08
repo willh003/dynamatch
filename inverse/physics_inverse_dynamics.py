@@ -3,7 +3,10 @@ import mujoco
 import copy
 
 from scipy.optimize import minimize_scalar, minimize
-from inverse.utils import set_state
+
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from envs.env_utils import set_state
 
 def get_ctrl_from_applied_force(applied_force, model, debug=False):
     """

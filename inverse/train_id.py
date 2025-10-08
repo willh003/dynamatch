@@ -13,47 +13,47 @@ import sys
 import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import build_action_translator_from_config
+from learned_inverse_dynamics import FlowInverseDynamics
 
-def load_action_translation_dataset(dataset_path):
-    """Load action translation dataset from zarr file."""
-    print("=== Loading Action Translation Dataset ===")
+
+def load_inverse_dynamics_dataset(dataset_path):
+    """Load inverse dynamics dataset from zarr file."""
+    print("=== Loading Inverse Dynamics Dataset ===")
     
     store = zarr.open(dataset_path, mode='r')
     data_group = store['data']
     meta_group = store['meta']
     
     states = data_group['state'][:]
-    original_actions = data_group['original_action'][:]
-    shifted_actions = data_group['shifted_action'][:]
+    actions = data_group['action'][:]
+    next_states = data_group['next_state'][:]
     num_samples = meta_group['num_samples'][0]
     
     print(f"Loaded dataset with {num_samples} samples")
     print(f"State shape: {states.shape}")
-    print(f"Original action shape: {original_actions.shape}")
-    print(f"Shifted action shape: {shifted_actions.shape}")
+    print(f"Action shape: {actions.shape}")
+    print(f"Next state shape: {next_states.shape}")
     
-    return states, original_actions, shifted_actions
+    return states, actions, next_states
 
 
-def train_action_translator(states,model, original_actions, shifted_actions, 
+def train_inverse_dynamics(states, actions, next_states, model, 
                           obs_dim, action_dim, num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2):
-    """Train the Action Translator model."""
-    print("=== Training Action Translator ===")
+    """Train the Inverse Dynamics model."""
+    print("=== Training Inverse Dynamics ===")
     
     # Convert to tensors
     states_tensor = torch.FloatTensor(states)
-    original_actions_tensor = torch.FloatTensor(original_actions)
-    shifted_actions_tensor = torch.FloatTensor(shifted_actions)
+    actions_tensor = torch.FloatTensor(actions)
+    next_states_tensor = torch.FloatTensor(next_states)
 
     # Add action dimension if not present
-    if len(original_actions_tensor.shape) == 1:
-        original_actions_tensor = original_actions_tensor.unsqueeze(1)
-    if len(shifted_actions_tensor.shape) == 1:
-        shifted_actions_tensor = shifted_actions_tensor.unsqueeze(1)
+    if len(actions_tensor.shape) == 1:
+        actions_tensor = actions_tensor.unsqueeze(1)
     
     # Create dataset and split into train/val
-    dataset = TensorDataset(states_tensor, original_actions_tensor, shifted_actions_tensor)
+    dataset = TensorDataset(states_tensor, actions_tensor, next_states_tensor)
     
     # Calculate split sizes
     total_size = len(dataset)
@@ -72,7 +72,7 @@ def train_action_translator(states,model, original_actions, shifted_actions,
     model.to(device)
     
     # Print model info
-    print("\n--- Action Translator Model Info ---")
+    print("\n--- Inverse Dynamics Model Info ---")
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total Parameters: {total_params:,}")
     
@@ -84,7 +84,6 @@ def train_action_translator(states,model, original_actions, shifted_actions,
                 print(f"{name}: {param_count:,} parameters")
     print("=" * 40)
     
-    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Training loop
@@ -104,19 +103,18 @@ def train_action_translator(states,model, original_actions, shifted_actions,
         train_pbar = tqdm(train_dataloader, desc=f"Train Epoch {epoch+1}/{num_epochs}", 
                          position=1, leave=False, ncols=100)
         
-        for batch_states, batch_original_actions, batch_shifted_actions in train_pbar:
+        for batch_states, batch_actions, batch_next_states in train_pbar:
             batch_states = batch_states.to(device)
-            batch_original_actions = batch_original_actions.to(device)
-            batch_shifted_actions = batch_shifted_actions.to(device)
+            batch_actions = batch_actions.to(device)
+            batch_next_states = batch_next_states.to(device)
             
             optimizer.zero_grad()
             
-            # Forward pass: predict shifted action given state and original action
+            # Forward pass: compute loss for inverse dynamics p(a | s, s')
             loss = model(obs=batch_states, 
-                        action_prior=batch_original_actions,
-                        action=batch_shifted_actions)
+                        next_obs=batch_next_states,
+                        action=batch_actions)
                          
-                        
             # Backward pass
             loss.backward()
             optimizer.step()
@@ -143,15 +141,14 @@ def train_action_translator(states,model, original_actions, shifted_actions,
                        position=1, leave=False, ncols=100)
         
         with torch.no_grad():
-            for batch_states, batch_original_actions, batch_shifted_actions in val_pbar:
+            for batch_states, batch_actions, batch_next_states in val_pbar:
                 batch_states = batch_states.to(device)
-                batch_original_actions = batch_original_actions.to(device)
-                batch_shifted_actions = batch_shifted_actions.to(device)
+                batch_actions = batch_actions.to(device)
+                batch_next_states = batch_next_states.to(device)
                 
                 # Forward pass
-                loss = model(batch_states, batch_original_actions, batch_shifted_actions)
+                loss = model(batch_states, batch_next_states, batch_actions)
                 
-                                
                 epoch_val_loss += loss.item()
                 num_val_batches += 1
                 
@@ -186,19 +183,20 @@ def train_action_translator(states,model, original_actions, shifted_actions,
     
     print(f"Training completed. Final train loss: {train_losses[-1]:.6f}, Final val loss: {val_losses[-1]:.6f}")
 
-    
     return model, train_losses, val_losses
 
+
 def create_output_path_from_config(config_path):
-    """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
+    """Create output path by replacing 'sequence' with 'inverse_dynamics' in the buffer path."""
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     buffer_path = config['buffer_path']
-    # Replace 'sequence' with 'relabeled_actions' in the path
-    output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
+    # Replace 'sequence' with 'inverse_dynamics' in the path
+    output_path = buffer_path.replace('/sequence/', '/inverse_dynamics/')
     
     return output_path
+
 
 def create_model_path_from_data_path(model_config_path, data_path):
     """Create model output path based on config path."""
@@ -207,15 +205,42 @@ def create_model_path_from_data_path(model_config_path, data_path):
     model_name = model_config['name']
     output_dir = os.path.dirname(data_path)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_translator.pth')
+    model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_inverse_dynamics.pth')
     return model_path
 
+
+def build_inverse_dynamics_from_config(cfg_dict, obs_dim=None, action_dim=None):
+    """Build inverse dynamics model from config."""
+    # For now, we'll use FlowInverseDynamics as the default
+    # In the future, this could be extended to support different architectures
+    
+    if obs_dim is None or action_dim is None:
+        raise ValueError("obs_dim and action_dim must be provided")
+    
+    # Extract parameters from config
+    diffusion_step_embed_dim = cfg_dict.get('diffusion_step_embed_dim', 16)
+    down_dims = cfg_dict.get('down_dims', [16, 32, 64])
+    num_inference_steps = cfg_dict.get('num_inference_steps', 100)
+    device = cfg_dict.get('device', 'cuda')
+    
+    model = FlowInverseDynamics(
+        action_dim=action_dim,
+        obs_dim=obs_dim,
+        diffusion_step_embed_dim=diffusion_step_embed_dim,
+        down_dims=down_dims,
+        num_inference_steps=num_inference_steps,
+        device=device
+    )
+    
+    return model
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Train action translator from action translation dataset')
+    parser = argparse.ArgumentParser(description='Train inverse dynamics model from inverse dynamics dataset')
     parser.add_argument('--dataset_config', type=str, required=True,
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--model_config', type=str, required=True,
-                       help='Path to model config YAML file (e.g., dynamics/configs/action_translator/ant_mlp.yaml)')
+                       help='Path to model config YAML file (e.g., dynamics/configs/inverse_dynamics/ant_flow.yaml)')
     parser.add_argument('--num_epochs', type=int, default=100,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
@@ -231,31 +256,28 @@ def main():
     
     args = parser.parse_args()
     
-    # Initialize wandb if not disabled
-    # Extract config name for run name
-    
     # Create paths based on config
     dataset_path = create_output_path_from_config(args.dataset_config)
     model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
-    plot_output_path = os.path.join(os.path.dirname(model_output_path), 'action_distributions.png')
+    plot_output_path = os.path.join(os.path.dirname(model_output_path), 'training_curves.png')
     
     print(f"Dataset path: {dataset_path}")
     print(f"Model output path: {model_output_path}")
     print(f"Plot output path: {plot_output_path}")
     
-    # Load action translation dataset
-    states, original_actions, shifted_actions = load_action_translation_dataset(dataset_path)
+    # Load inverse dynamics dataset
+    states, actions, next_states = load_inverse_dynamics_dataset(dataset_path)
     
     # Determine dimensions from data
     obs_dim = states.shape[1]
-    action_dim = original_actions.shape[1]
+    action_dim = actions.shape[1]
     
-    # Optionally build model from config for flexible architectures
-    print(f"Building action translator from model config: {args.model_config}")
+    # Build model from config
+    print(f"Building inverse dynamics model from model config: {args.model_config}")
     # Load the YAML config first
     with open(args.model_config, 'r', encoding='utf-8') as f:
         model_config_dict = yaml.safe_load(f)
-    model_from_config = build_action_translator_from_config(model_config_dict, obs_dim, action_dim, load_checkpoint=False)
+    model_from_config = build_inverse_dynamics_from_config(model_config_dict, obs_dim, action_dim)
 
     train_config_dict = {
             "num_epochs": args.num_epochs,
@@ -272,15 +294,15 @@ def main():
     wandb.init(
         project="dynamics",
         entity="willhu003",
-        name=f"action_translator_{config_name}",
+        name=f"inverse_dynamics_{config_name}",
         mode=args.wandb,
         config=train_config_dict,
         tags=wandb_tags
     )
     
-    # Train action translator
-    model, train_losses, val_losses = train_action_translator(
-        states, model_from_config, original_actions, shifted_actions,
+    # Train inverse dynamics model
+    model, train_losses, val_losses = train_inverse_dynamics(
+        states, actions, next_states, model_from_config,
         obs_dim, action_dim, args.num_epochs, args.learning_rate, 
         args.batch_size, args.device, args.val_split
     )

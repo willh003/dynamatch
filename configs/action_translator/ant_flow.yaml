@@ -1,4 +1,4 @@
-_target_: action_translation.FlowActionPriorTranslator
+_target_: action_translation.FlowActionPriorConditionedTranslator
 name: ant_flow
 action_dim: 8 
 obs_dim: 107
@@ -8,5 +8,5 @@ down_dims: [32, 64, 128]
 num_inference_steps: 100
 
 # Path to the trained action translator checkpoint
-checkpoint_path: null
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_high_friction/ant_flow_20251008_123006_translator.pth
 

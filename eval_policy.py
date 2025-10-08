@@ -467,6 +467,7 @@ def evaluate_and_record(
 
                 translated_action, base_action = model.predict_base_and_translated(policy_observation=obs, translator_observation=full_observation, deterministic=deterministic)
                 
+                
                 if len(translated_action.shape) > 1:
                     base_action = base_action[0]
                     translated_action = translated_action[0]
@@ -528,70 +529,7 @@ def evaluate_and_record(
         #                  all_mj_ankle_actuator_world, all_mj_ankle_constraint_world, 
         #                  video_run_dir)
     
-    if is_action_translator:
-        # ActionTranslator specific plotting
-        all_translated_actions = np.array(all_translated_actions)
-        
-        plt.figure(figsize=(15, 5))
-        
-        # Action distributions
-        plt.subplot(1, 3, 1)
-        plt.hist(all_actions, alpha=0.7, label='Base Policy Actions', bins=50)
-        plt.hist(all_translated_actions, alpha=0.7, label='Translated Actions', bins=50)
-        plt.title('Action Distributions')
-        plt.xlabel('Action Value')
-        plt.ylabel('Frequency')
-        plt.legend()
-        
-        # Action comparison scatter plot
-        plt.subplot(1, 3, 2)
-        plt.scatter(all_actions, all_translated_actions, alpha=0.6)
-        plt.title('Base Policy vs Translated Actions')
-        plt.xlabel('Base Policy Action')
-        plt.ylabel('Translated Action')
-        plt.legend()
-        
-        # Returns distribution
-        plt.subplot(1, 3, 3)
-        plt.hist(all_returns, bins=20, alpha=0.7)
-        plt.title('Episode Returns')
-        plt.xlabel('Return')
-        plt.ylabel('Frequency')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(video_run_dir, "action_comparison.png"))
-        plt.close()
-    else:
-        # PPO specific plotting
-        plt.figure(figsize=(12, 5))
-        
-        # Actions distribution
-        plt.subplot(1, 2, 1)
-        plt.hist(all_actions, bins=50, alpha=0.7)
-        plt.title('Action Distribution')
-        plt.xlabel('Action Value')
-        plt.ylabel('Frequency')
-        
-        # Returns distribution
-        plt.subplot(1, 2, 2)
-        plt.hist(all_returns, bins=20, alpha=0.7)
-        plt.title('Episode Returns')
-        plt.xlabel('Return')
-        plt.ylabel('Frequency')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(video_run_dir, "actions.png"))
-        plt.close()
-        
-        # Save returns plot separately for PPO
-        plt.figure()
-        plt.hist(all_returns, bins=20, alpha=0.7)
-        plt.title('Episode Returns')
-        plt.xlabel('Return')
-        plt.ylabel('Frequency')
-        plt.savefig(os.path.join(video_run_dir, "returns.png"))
-        plt.close()
-
+    
     # Export GIFs alongside MP4s, limiting GIFs to at most 100 frames
     mp4_files = sorted(Path(video_run_dir).glob("evaluation-episode-*.mp4"))
     for mp4_file in mp4_files:

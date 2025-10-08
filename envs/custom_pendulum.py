@@ -1,7 +1,7 @@
 import gymnasium as gym
 import mujoco
 
-from .env_utils import IntegrableEnvWrapper, ActionAddWrapper, MLPActionWrapper
+from .env_transforms import IntegrableEnvWrapper, ActionAddWrapper, MLPActionWrapper
 
 def make_inverted_pendulum_integrable(**kwargs):
     """Factory for the integrable InvertedPendulum.

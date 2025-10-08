@@ -8,7 +8,7 @@ remains unmodified.
 
 import os
 import gymnasium as gym
-from .env_utils import ModifyFrictionWrapper, IntegrableEnvWrapper
+from .env_transforms import ModifyFrictionWrapper, IntegrableEnvWrapper
 
 def make_integrable_ant_standard_friction(**kwargs):
     """Exact Ant-v5 copy using local copied XML, with frame_skip and integrater modified."""
