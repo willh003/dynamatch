@@ -267,6 +267,10 @@ def evaluate_policy(
                 # Regular PPO model
                 actions, _ = model.predict(observation=observation, deterministic=deterministic)
 
+            # Only support single env eval for now
+            if len(actions.shape) > 1:
+                actions = actions[0]
+
             new_observation, reward, terminated, truncated, info = env.step(actions)
             current_rewards += reward
             current_lengths += 1
@@ -407,6 +411,7 @@ def evaluate_and_record(
     # Load model based on type
     if is_action_translator:
         print("Loading ActionTranslator model...")
+
         model = load_action_translator_policy_from_config(
             translator_policy_config_path,
             source_policy_checkpoint=source_policy_checkpoint,
@@ -414,10 +419,10 @@ def evaluate_and_record(
         )
         print("Model loaded successfully!")
         
-        # Print parameter counts and model info
         print_model_info(model)
-    else:  # is_source_policy
+    else:
         print("Loading source policy from config...")
+
         model = load_source_policy_from_config(
             source_policy_config_path,
             source_policy_checkpoint=source_policy_checkpoint
@@ -469,6 +474,9 @@ def evaluate_and_record(
                 action, _ = model.predict(obs, deterministic=deterministic)
                 action_to_step = action
                 all_actions.append(action)
+
+            if len(action_to_step.shape) > 1:
+                action_to_step = action_to_step[0]
 
             obs, reward, terminated, truncated, info = video_env.step(action_to_step)
 

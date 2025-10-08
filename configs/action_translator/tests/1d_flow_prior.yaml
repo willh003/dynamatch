@@ -6,7 +6,6 @@ obs_dim: 1
 diffusion_step_embed_dim: 16
 down_dims: [16, 32, 64]
 num_inference_steps: 100
-timeshift: 1.0
 
 # Path to the trained action translator checkpoint
 checkpoint_path: null

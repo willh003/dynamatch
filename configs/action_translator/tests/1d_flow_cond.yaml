@@ -1,12 +1,11 @@
 _target_: action_translation.FlowActionConditionedTranslator
-name: 2d_flow
-action_dim: 2
-obs_dim: 2
+name: 1d_flow
+action_dim: 1
+obs_dim: 1
 
 diffusion_step_embed_dim: 16
 down_dims: [16, 32, 64]
 num_inference_steps: 100
-timeshift: 1.0
 
 # Path to the trained action translator checkpoint
 checkpoint_path: null

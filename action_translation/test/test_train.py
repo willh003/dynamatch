@@ -27,8 +27,8 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
 
     obs_dim = states.shape[1]
     action_dim = original_actions.shape[1]
-    num_epochs = 50
-    learning_rate = 3e-4
+    num_epochs = 200
+    learning_rate = 1e-3
     batch_size = 16
     device = 'cuda'
     val_split = 0.2
@@ -84,13 +84,14 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
 
 
 def test_flow_action_translator():
-    #model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow.yaml'
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow.yaml'
+    #model_config = '/home/wph52/weird/dynamics/configs/action_translator/tests/1d_flow_prior.yaml'
+    model_config = '/home/wph52/weird/dynamics/configs/action_translator/tests/1d_flow_prior_cond.yaml'
+    #model_config = '/home/wph52/weird/dynamics/configs/action_translator/tests/1d_flow_cond.yaml'
     test_action_translator_1d(model_config, test_name='flow', use_prior=True)
     #test_action_translator_1d(model_config, test_name='flow', use_prior=True)
 
 def test_mlp_action_translator():
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_mlp.yaml'
+    model_config = '/home/wph52/weird/dynamics/configs/action_translator/tests/1d_mlp.yaml'
     test_action_translator_1d(model_config, test_name='mlp')
 
 if __name__ == "__main__":

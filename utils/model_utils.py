@@ -4,6 +4,8 @@ import torch
 from omegaconf import OmegaConf
 import sys
 from hydra.utils import instantiate, get_class
+from hydra.core.global_hydra import GlobalHydra
+from hydra import initialize, compose
 import inspect
 
 # Add parent directories to path
@@ -144,31 +146,18 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
     # Load the base policy from checkpoint
     source_policy = PPO.load(checkpoint_path)
     
-    # Create action translator
+    # Create action translator using the same approach as build_action_translator_from_config
     action_translator_config = config['action_translator'].copy()
     action_translator_checkpoint_path = action_translator_config.pop('checkpoint_path', None)
-    
-    # Remove Hydra-specific fields
-    action_translator_config.pop('_target_', None)
     
     if action_translator_checkpoint_path is None:
         raise ValueError("Action translator checkpoint path must be provided either in config or as argument")
     
-    # Validate that we have integer dimensions
-    try:
-        action_dim = int(action_translator_config['action_dim'])
-        obs_dim = int(action_translator_config['obs_dim'])
-        action_translator_config['action_dim'] = action_dim
-        action_translator_config['obs_dim'] = obs_dim
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Invalid dimensions in config: action_dim={action_translator_config.get('action_dim')}, obs_dim={action_translator_config.get('obs_dim')}. Error: {e}")
-    
-    # Debug: print the config being used
-    print(f"Action translator config: {action_translator_config}")
-    
-    # Instantiate action translator
-    from action_translation import SimpleActionTranslator
-    action_translator = SimpleActionTranslator(**action_translator_config)
+    # Use build_action_translator_from_config for consistent parameter filtering
+    action_translator = build_action_translator_from_config(
+        action_translator_config, 
+        load_checkpoint=False
+    )
     
     # Load the action translator weights
     action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
@@ -183,6 +172,7 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
 def load_action_translator_from_hydra_config_simple(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
     """
     Simple method to load ActionTranslator from Hydra config by manually resolving defaults.
+    Requires config_path for relative path resolution.
     """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -222,22 +212,11 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     if action_translator_checkpoint:
         action_translator_checkpoint_path = action_translator_checkpoint
     
-    # Remove Hydra-specific fields and checkpoint path
-    action_translator_config.pop('_target_', None)
-    action_translator_config.pop('checkpoint_path', None)
-    
-    # Validate dimensions
-    try:
-        action_dim = int(action_translator_config['action_dim'])
-        obs_dim = int(action_translator_config['obs_dim'])
-        action_translator_config['action_dim'] = action_dim
-        action_translator_config['obs_dim'] = obs_dim
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Invalid dimensions in config: action_dim={action_translator_config.get('action_dim')}, obs_dim={action_translator_config.get('obs_dim')}. Error: {e}")
-    
-    # Create action translator
-    from action_translation import SimpleActionTranslator
-    action_translator = SimpleActionTranslator(**action_translator_config)
+    # Use build_action_translator_from_config for consistent parameter filtering
+    action_translator = build_action_translator_from_config(
+        action_translator_config, 
+        load_checkpoint=False
+    )
     
     # Load action translator weights
     if action_translator_checkpoint_path is None:
@@ -250,69 +229,6 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
     
     return combined_policy
-
-
-def load_action_translator_from_hydra_config(config_path, source_policy_checkpoint=None, action_translator_checkpoint=None):
-    """
-    Alternative method using Hydra for more complex configs.
-    This method is more robust for complex configurations.
-    """
-    # Clean up any existing Hydra instance
-    if GlobalHydra().is_initialized():
-        GlobalHydra().clear()
-    
-    # Initialize Hydra with the config directory
-    config_dir = os.path.dirname(config_path)
-    config_name = os.path.splitext(os.path.basename(config_path))[0]
-    
-    with initialize(config_path=config_dir, version_base=None):
-        cfg = compose(config_name=config_name)
-        
-        # Override checkpoint paths if provided
-        if source_policy_checkpoint:
-            cfg.source_policy.checkpoint_path = source_policy_checkpoint
-        if action_translator_checkpoint:
-            cfg.action_translator.checkpoint_path = action_translator_checkpoint
-        
-        # Load base policy
-        source_policy_checkpoint_path = cfg.source_policy.checkpoint_path
-        if source_policy_checkpoint_path is None:
-            raise ValueError("Base policy checkpoint path must be provided")
-        
-        source_policy = PPO.load(source_policy_checkpoint_path)
-        
-        # Create and load action translator
-        from action_translation import SimpleActionTranslator
-        
-        # Get action translator config
-        action_translator_config = cfg.action_translator.copy()
-        action_translator_checkpoint_path = action_translator_config.pop('checkpoint_path', None)
-        
-        if action_translator_checkpoint_path is None:
-            raise ValueError("Action translator checkpoint path must be provided")
-        
-        # Remove Hydra-specific fields
-        action_translator_config.pop('_target_', None)
-        
-        # Validate that we have integer dimensions
-        try:
-            action_dim = int(action_translator_config['action_dim'])
-            obs_dim = int(action_translator_config['obs_dim'])
-            action_translator_config['action_dim'] = action_dim
-            action_translator_config['obs_dim'] = obs_dim
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid dimensions in config: action_dim={action_translator_config.get('action_dim')}, obs_dim={action_translator_config.get('obs_dim')}. Error: {e}")
-        
-        # Instantiate action translator
-        action_translator = SimpleActionTranslator(**action_translator_config)
-        
-        action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
-        action_translator.eval()
-        
-        # Create combined policy
-        combined_policy = ActionTranslatorSB3Policy(source_policy, action_translator)
-        
-        return combined_policy
 
 
 def load_source_policy_from_config(config_path, source_policy_checkpoint=None):

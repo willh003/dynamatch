@@ -10,6 +10,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import wandb
 import sys
+import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import build_action_translator_from_config
 
@@ -208,7 +209,7 @@ def create_model_path_from_data_path(model_config_path, data_path):
         model_config = yaml.safe_load(f)
     model_name = model_config['name']
     output_dir = os.path.dirname(data_path)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_translator.pth')
     return model_path
 
@@ -271,7 +272,10 @@ def main():
     model_from_config = None
     if args.model_config is not None:
         print(f"Building action translator from model config: {args.model_config}")
-        model_from_config = build_action_translator_from_config(args.model_config, obs_dim, action_dim, load_checkpoint=False)
+        # Load the YAML config first
+        with open(args.model_config, 'r', encoding='utf-8') as f:
+            model_config_dict = yaml.safe_load(f)
+        model_from_config = build_action_translator_from_config(model_config_dict, obs_dim, action_dim, load_checkpoint=False)
 
     # Train action translator
     model, train_losses, val_losses = train_action_translator(

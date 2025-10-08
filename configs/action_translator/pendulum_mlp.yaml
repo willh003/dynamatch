@@ -1,8 +1,12 @@
 _target_: action_translation.SimpleActionTranslator
+name: pendulum_mlp
 action_dim: 1
 obs_dim: 4
+net_arch: [32, 32]
 # Path to the trained action translator checkpoint
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/action_translator_model.pth 
+
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/pendulum_mlp_20251008_051925_translator.pth
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/action_translator_model.pth 
 
 
 

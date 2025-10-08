@@ -1,5 +1,5 @@
 defaults:
   - source_policy: pendulum_ppo
-  - action_translator: pendulum_mlp
+  - action_translator: pendulum_flow
 
 _target_: action_translation.ActionTranslatorSB3Policy

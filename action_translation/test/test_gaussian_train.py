@@ -99,7 +99,7 @@ def test_gaussian(model_config, test_name):
 
 
 def test_flow_action_translator():
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/2d_flow_act_cond.yaml'
+    model_config = '/home/wph52/weird/dynamics/configs/action_translator/tests/2d_flow_act_cond.yaml'
     test_gaussian(model_config, test_name='flow')
     #test_action_translator_1d(model_config, test_name='flow', use_prior=False)
 if __name__ == "__main__":
