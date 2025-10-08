@@ -3,6 +3,7 @@ import os
 import numpy as np
 import wandb
 import torch
+import yaml
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from action_translation.train import train_action_translator
@@ -11,9 +12,13 @@ from utils.model_utils import build_action_translator_from_config
 def test_action_translator_1d(model_config, test_name, use_prior=True):
 
     print(f"Building action translator from model config: {model_config}")
-    model_from_config = build_action_translator_from_config(model_config)
 
-    states = np.arange(-1, 1, 0.005).reshape(-1, 1, 1)
+    with open(model_config, 'r', encoding='utf-8') as f:
+        cfg_dict = yaml.safe_load(f) or {}
+
+    model_from_config = build_action_translator_from_config(cfg_dict)
+
+    states = np.arange(-1, 1, 0.005).reshape(-1, 1)
     shifted_actions = np.tanh(states)
     if use_prior:
         original_actions = states
@@ -42,7 +47,7 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
         obs_dim, action_dim, num_epochs, learning_rate, 
         batch_size, device, val_split, model=model_from_config
     )
-    states_eval = np.arange(-1, 1, 0.01).reshape(-1, 1, 1)
+    states_eval = np.arange(-2.5, 2.5, 0.015).reshape(-1, 1)
     shifted_actions_eval = np.tanh(states_eval)
     if use_prior:
         original_actions_eval = states_eval
@@ -58,11 +63,13 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
     shifted_actions_to_plot = shifted_actions_eval.squeeze()
     translated_actions_to_plot = translated_actions.squeeze()
     
-    prior_tag = 'prior' if use_prior else ''
+    prior_tag = 'prior' if use_prior else 'noprior'
     plt.title(f'{test_name} Action Translator Evaluation')
     plt.plot(states_to_plot, original_actions_to_plot, label='Original actions')
     plt.plot(states_to_plot, shifted_actions_to_plot, label='Ground Truth Shifted actions')
     plt.plot(states_to_plot, translated_actions_to_plot, label='Translated actions')
+
+    plt.vlines([states.min(), states.max()], ymin=original_actions_to_plot.min(), ymax=original_actions_to_plot.max(), color='red')
     plt.legend()
     plt.savefig(f'test_media/{test_name}_{prior_tag}_translated_actions.png')
     plt.close()
@@ -78,16 +85,16 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
 
 def test_flow_action_translator():
     #model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow.yaml'
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow_uncond.yaml'
-    test_action_translator_1d(model_config, test_name='flow', use_prior=False)
+    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow.yaml'
+    test_action_translator_1d(model_config, test_name='flow', use_prior=True)
     #test_action_translator_1d(model_config, test_name='flow', use_prior=True)
 
 def test_mlp_action_translator():
     model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_mlp.yaml'
-    #test_action_translator_1d(model_config, test_name='mlp')
+    test_action_translator_1d(model_config, test_name='mlp')
 
 if __name__ == "__main__":
     test_flow_action_translator()
-    test_mlp_action_translator()
+    #test_mlp_action_translator()
     
     

@@ -1,4 +1,4 @@
-_target_: action_translation.FlowActionTranslator
+_target_: action_translation.FlowActionPriorTranslator
 name: ant_flow
 action_dim: 8 
 obs_dim: 107

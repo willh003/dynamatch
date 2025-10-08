@@ -12,7 +12,7 @@ from generative_policies.flow_model import ConditionalFlowModel
 
 
 
-def test_action_translator_1d(model_config, test_name, use_prior=True):
+def test_gaussian(model_config, test_name):
 
     print(f"Building action translator from model config: {model_config}")
 
@@ -33,7 +33,7 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
     
     obs_dim = states.shape[-1]
     action_dim = original_actions.shape[-1]
-    num_epochs = 10
+    num_epochs = 100
     learning_rate = 1e-3
     batch_size = 16
     device = 'cuda'
@@ -71,7 +71,6 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
     shifted_actions_to_plot = shifted_actions_eval.squeeze()
     translated_actions_to_plot = translated_actions.squeeze()
     
-    prior_tag = 'prior' if use_prior else ''
     plt.figure(figsize=(10, 8))
     plt.title(f'{test_name} Action Translator Evaluation - 2D Plot')
     # Plot original actions (prior) in green
@@ -87,7 +86,7 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
     plt.ylabel('Action Dimension 1')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f'test_media/{test_name}_{prior_tag}_translated_actions.png')
+    plt.savefig(f'test_media/{test_name}_2d_translated_actions.png')
     plt.close()
 
     plt.title(f'{test_name} Action Translator Loss')
@@ -95,22 +94,16 @@ def test_action_translator_1d(model_config, test_name, use_prior=True):
     plt.plot(val_losses, label='Val')
     plt.legend()
     
-    plt.savefig(f'test_media/{test_name}_{prior_tag}_loss.png')
+    plt.savefig(f'test_media/{test_name}_2d_loss.png')
     plt.close()
 
 
 def test_flow_action_translator():
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_flow.yaml'
-    test_action_translator_1d(model_config, test_name='flow', use_prior=True)
+    model_config = '/home/wph52/weird/dynamics/configs/action_translator/2d_flow_act_cond.yaml'
+    test_gaussian(model_config, test_name='flow')
     #test_action_translator_1d(model_config, test_name='flow', use_prior=False)
-
-def test_mlp_action_translator():
-    model_config = '/home/wph52/weird/dynamics/configs/action_translator/1d_mlp.yaml'
-    #test_action_translator_1d(model_config, test_name='mlp', prior=True)
-
 if __name__ == "__main__":
     test_flow_action_translator()
-    test_mlp_action_translator()
     
     
     

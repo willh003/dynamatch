@@ -11,3 +11,4 @@ __pycache__/
 *.pyzwzwz
 videos/
 wandb/
+test/test_media/

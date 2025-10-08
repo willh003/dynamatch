@@ -5,16 +5,6 @@ from generative_policies.unet import UnetNoisePredictionNet
 from generative_policies.obs_encoder import IdentityObservationEncoder
 from generative_policies.prior import GaussianPrior
 
-class FlowActionTranslator(ActionTranslatorInterface):
-
-    def forward(self, obs, action_prior, action) -> torch.Tensor:
-        """
-        Compute the loss for a sampled batch of observations, action_priors, and actions.
-        For FlowActionTranslator, this would need to be implemented based on the flow policy's loss function.
-        """        
-        global_cond = self.obs_encoder(obs)
-        return self.flow_model(global_cond, action_prior, action)
-
 
 class FlowInverseDynamics(nn.Module):
 
