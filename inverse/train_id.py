@@ -12,6 +12,7 @@ import sys
 import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import load_inverse_dynamics_model_from_config
+from utils.data_utils import load_transition_dataset, get_transition_path_from_dataset_config
 
 # For physics ID sanity check
 import gymnasium as gym
@@ -19,30 +20,9 @@ from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
 
 
-def load_inverse_dynamics_dataset(dataset_path):
-    """Load inverse dynamics dataset from zarr file."""
-    print("=== Loading Inverse Dynamics Dataset ===")
-    
-    store = zarr.open(dataset_path, mode='r')
-    data_group = store['data']
-    meta_group = store['meta']
-    
-    states = data_group['state'][:]
-    actions = data_group['action'][:]
-    next_states = data_group['next_state'][:]
-    num_samples = meta_group['num_samples'][0]
-    
-    print(f"Loaded dataset with {num_samples} samples")
-    print(f"State shape: {states.shape}")
-    print(f"Action shape: {actions.shape}")
-    print(f"Next state shape: {next_states.shape}")
-    
-    return states, actions, next_states
-
-
 def quick_validate_id(dataset, env, max_samples=2000):
     """Quickly validate the ID model on a dataset."""
-    print("=== Quick Validating ID Model ===")
+    print("=== Quick Validating Physics ID Model ===")
     errors = []
     for i in tqdm(range(min(max_samples, len(dataset)))):
         state = dataset[i][0]
@@ -52,7 +32,7 @@ def quick_validate_id(dataset, env, max_samples=2000):
         
         errors.append(error)
 
-    print(f"Mean ID error: {np.mean(errors):.3e}, Std ID error: {np.std(errors):.3e}, Max ID error: {np.max(errors):.3e}, Min ID error: {np.min(errors):.3e}")
+    print(f"Mean Physics ID error: {np.mean(errors):.3e}, Std Physics ID error: {np.std(errors):.3e}, Max ID error: {np.max(errors):.3e}, Min ID error: {np.min(errors):.3e}")
 
 
 def train_inverse_dynamics(states, actions, next_states, model, 
@@ -237,18 +217,6 @@ def train_inverse_dynamics(states, actions, next_states, model,
 
     return model, train_losses, val_losses
 
-
-def create_output_path_from_config(config_path):
-    """Create output path by replacing 'sequence' with 'inverse_dynamics' in the buffer path."""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    
-    buffer_path = config['buffer_path']
-    # Replace 'sequence' with 'inverse_dynamics' in the path
-    output_path = buffer_path.replace('/sequence/', '/transitions/')
-    
-    return output_path
-
 def get_env_id_from_config(config_path):
     """Extract environment ID from dataset config."""
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -274,7 +242,7 @@ def main():
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--model_config', type=str, required=True,
                        help='Path to model config YAML file (e.g., dynamics/configs/inverse_dynamics/ant_flow.yaml)')
-    parser.add_argument('--num_epochs', type=int, default=100,
+    parser.add_argument('--num_epochs', type=int, default=1000,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                        help='Learning rate')
@@ -292,7 +260,7 @@ def main():
     args = parser.parse_args()
     
     # Create paths based on config
-    dataset_path = create_output_path_from_config(args.dataset_config)
+    dataset_path = get_transition_path_from_dataset_config(args.dataset_config)
     model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'training_curves.png')
     
@@ -305,7 +273,7 @@ def main():
     print(f"Environment ID: {env_id}")
     
     # Load inverse dynamics dataset
-    states, actions, next_states = load_inverse_dynamics_dataset(dataset_path)
+    states, actions, next_states = load_transition_dataset(dataset_path)
 
     
     # Build model from config

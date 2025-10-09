@@ -1,0 +1,10 @@
+_target_: generative_policies.inverse_dynamics.MlpInverseDynamics
+name: ant_mlp_id
+action_dim: 8 
+obs_dim: 107
+
+net_arch: [64, 64, 64]
+
+# Path to the trained action translator checkpoint
+checkpoint_path: null
+

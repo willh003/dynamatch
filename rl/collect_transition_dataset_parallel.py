@@ -11,6 +11,7 @@ import sys
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
+from utils.data_utils import get_transition_path_from_dataset_config
 from tqdm import tqdm
 import zarr
 
@@ -378,7 +379,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
     append = config.get('append', False)
     
     # Create output path
-    output_path = create_output_path_from_config(config)
+    output_path = get_transition_path_from_dataset_config(config_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     # Collect transitions in parallel

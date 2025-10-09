@@ -6,8 +6,36 @@ from scipy.optimize import minimize_scalar, minimize
 
 import sys
 import os
+import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.env_utils import set_state
+from generative_policies.inverse_dynamics.interface import InverseDynamicsInterface
+
+class PhysicsInverseDynamicsModel(InverseDynamicsInterface):
+    def __init__(self, physics_env):
+        self.env = physics_env
+            
+    def predict(self, state, next_state):
+
+        preds = []
+        for s, ns in zip(state, next_state):
+            pred = gym_inverse_dynamics(self.env, s, ns)
+            preds.append(pred)
+        return np.array(preds)
+    
+    def forward(self, state, next_state, action):
+        preds = []
+        for s, ns in zip(state, next_state):
+            pred = gym_inverse_dynamics(self.env, s, ns)
+            preds.append(pred)
+        preds = torch.as_tensor(preds)
+
+        loss = torch.nn.functional.mse_loss(preds, action)
+        return loss
+    
+    def to(self, device):
+        pass
+    
 
 def get_ctrl_from_applied_force(applied_force, model, debug=False):
     """

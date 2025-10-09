@@ -15,6 +15,7 @@ from datasets.trajectory_dataset import make_trajectory_dataset
 from utils.config_utils import filter_config_with_debug, load_yaml_config
 from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
+from utils.data_utils import get_relabeled_actions_path_from_config
 
 
 
@@ -166,16 +167,6 @@ def create_action_translation_dataset(states, original_actions, shifted_actions,
     return output_path
 
 
-def create_output_path_from_config(config):
-    """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
-
-    buffer_path = config['buffer_path']
-    # Replace 'sequence' with 'relabeled_actions' in the path
-    output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
-    
-    return output_path
-
-
 def main():
     parser = argparse.ArgumentParser(description='Create action translation dataset from sequence dataset')
     parser.add_argument('--config', type=str, required=True,
@@ -187,10 +178,11 @@ def main():
     register_custom_envs()
 
     # Load config
+    config_path = args.config
     config = load_yaml_config(args.config)
     
     # Create output path from config
-    output_path = create_output_path_from_config(config)
+    output_path = get_relabeled_actions_path_from_config(config_path)
     print(f"Output path: {output_path}")
 
     # Define state keys for pendulum environment

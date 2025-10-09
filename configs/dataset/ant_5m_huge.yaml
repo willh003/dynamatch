@@ -1,0 +1,29 @@
+_target_: datasets.trajectory_dataset.make_trajectory_dataset
+name: pendulum
+
+# Dataset collection parameters
+model_path: /home/wph52/weird/dynamics/rl/runs/Ant-v5_20251002_211516/models/best_model.zip
+env_id: AntIntegrable-v1
+source_env_id: AntIntegrable-v1
+buffer_path: /home/wph52/weird/dynamics/datasets/ant/sequence/ant_5m_huge/buffer.zarr
+env_kwargs: null
+num_episodes: 1000
+max_steps_per_episode: 1000
+deterministic: false
+seed: null
+append: false
+
+shape_meta:
+  # acceptable types: rgb, low_dim
+  obs:
+    "full_obs":
+      shape: [107]
+      type: low_dim
+  action:
+    shape: [8]
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: True
+normalize_lowdim: True
+val_ratio: 0.20

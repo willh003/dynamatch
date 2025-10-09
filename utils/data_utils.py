@@ -1,0 +1,49 @@
+import zarr
+import numpy as np
+import yaml
+
+def load_transition_dataset(dataset_path):
+    """Load transition dataset from zarr file."""
+    print("=== Loading Transition Dataset ===")
+    
+    store = zarr.open(dataset_path, mode='r')
+    data_group = store['data']
+    meta_group = store['meta']
+    
+    states = data_group['state'][:]
+    actions = data_group['action'][:]
+    next_states = data_group['next_state'][:]
+    num_samples = meta_group['num_samples'][0]
+    
+    print(f"Loaded dataset with {num_samples} samples")
+    print(f"State shape: {states.shape}")
+    print(f"Action shape: {actions.shape}")
+    print(f"Next state shape: {next_states.shape}")
+    
+    return states, actions, next_states
+
+
+def get_transition_path_from_dataset_config(config_path):
+    """Create output path by replacing 'sequence' with 'inverse_dynamics' in the buffer path."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    buffer_path = config['buffer_path']
+    # Replace 'sequence' with 'inverse_dynamics' in the path
+    output_path = buffer_path.replace('/sequence/', '/transitions/')
+    
+    return output_path
+
+
+
+def get_relabeled_actions_path_from_config(config_path):
+    """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+
+    buffer_path = config['buffer_path']
+    # Replace 'sequence' with 'relabeled_actions' in the path
+    output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
+    
+    return output_path
