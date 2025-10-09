@@ -1,10 +1,10 @@
-_target_: inverse.learned_inverse_dynamics.FlowInverseDynamics
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
 name: pendulum_flow_id
 action_dim: 1
 obs_dim: 4
 
-diffusion_step_embed_dim: 16
-down_dims: [16, 32]
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
 num_inference_steps: 10
 
 

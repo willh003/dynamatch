@@ -52,6 +52,13 @@ def load_sequence_dataset(dataset_config, state_keys):
 def get_inverse_dynamics_data(train_set, state_keys, max_samples=None):
     """Extract (s, a, s') triplets from sequence dataset."""
     print("=== Extracting Inverse Dynamics Data ===")
+
+    import gymnasium as gym
+    from inverse.physics_inverse_dynamics import gym_inverse_dynamics
+    from envs.register_envs import register_custom_envs
+    register_custom_envs()
+    physics_env = gym.make("InvertedPendulumIntegrable-v5")
+
     
     if max_samples is None:
         max_samples = len(train_set)
@@ -59,6 +66,7 @@ def get_inverse_dynamics_data(train_set, state_keys, max_samples=None):
     states = []
     actions = []
     next_states = []
+    id_actions = []
     
     print("Processing dataset to extract (s, a, s') triplets")
     for i in tqdm(range(min(max_samples, len(train_set)))):
@@ -96,6 +104,9 @@ def get_inverse_dynamics_data(train_set, state_keys, max_samples=None):
             action_unnorm = train_set.action_normalizer.reconstruct(action.cpu().numpy())
         else:
             action_unnorm = action.cpu().numpy()
+
+        id_action = gym_inverse_dynamics(physics_env, state_unnorm, next_state_unnorm)
+        id_actions.append(id_action)
         
         states.append(state_unnorm)
         actions.append(action_unnorm)
@@ -108,6 +119,9 @@ def get_inverse_dynamics_data(train_set, state_keys, max_samples=None):
             print(f"  Next state (unnormalized): {next_state_unnorm}")
             print(f"  Action: {action_unnorm}")
             print()
+
+    id_actions = np.array(id_actions)
+    print(f"mse ID action - Expert action: {np.mean((id_actions-np.array(actions))**2)}")
 
     return np.array(states), np.array(actions), np.array(next_states)
 

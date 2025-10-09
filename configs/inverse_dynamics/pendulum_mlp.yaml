@@ -1,6 +1,6 @@
-_target_: inverse.learned_inverse_dynamics.MlpInverseDynamics
+_target_: generative_policies.inverse_dynamics.MlpInverseDynamics
 name: pendulum_mlp_id
 action_dim: 1
 obs_dim: 4
 net_arch: [32, 32]
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable_large/pendulum_mlp_id_20251008_154857_inverse_dynamics.pth
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable/pendulum_mlp_id_20251008_190342_inverse_dynamics.pth

@@ -12,6 +12,11 @@ import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import load_inverse_dynamics_model_from_config
 
+# For physics ID sanity check
+import gymnasium as gym
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics
+from envs.register_envs import register_custom_envs
+
 
 def load_inverse_dynamics_dataset(dataset_path):
     """Load inverse dynamics dataset from zarr file."""
@@ -36,10 +41,17 @@ def load_inverse_dynamics_dataset(dataset_path):
 
 def train_inverse_dynamics(states, actions, next_states, model, 
                           num_epochs=100, learning_rate=1e-3, 
-                          batch_size=64, device='cpu', val_split=0.2):
+                          batch_size=64, device='cpu', val_split=0.2, env_id=None, 
+                          model_output_path=None):
     """Train the Inverse Dynamics model."""
     print("=== Training Inverse Dynamics ===")
+
     
+    # Use the same environment that was used for data collection
+    if env_id is None:
+        env_id = "InvertedPendulumIntegrable-v5"  # fallback for backward compatibility
+    physics_env = gym.make(env_id)
+
     # Convert to tensors
     states_tensor = torch.FloatTensor(states)
     actions_tensor = torch.FloatTensor(actions)
@@ -87,6 +99,9 @@ def train_inverse_dynamics(states, actions, next_states, model,
     train_losses = []
     val_losses = []
     
+    # Checkpoint tracking
+    best_val_loss = float('inf')
+    
     # Create outer progress bar for epochs
     epoch_pbar = tqdm(range(num_epochs), desc="Epochs", position=0, leave=True)
     
@@ -132,6 +147,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
         model.eval()
         epoch_val_loss = 0.0
         num_val_batches = 0
+        epoch_val_physics_id_loss = 0.0
         
         # Create inner progress bar for validation batches
         val_pbar = tqdm(val_dataloader, desc=f"Val Epoch {epoch+1}/{num_epochs}", 
@@ -144,10 +160,20 @@ def train_inverse_dynamics(states, actions, next_states, model,
                 batch_next_states = batch_next_states.to(device)
                 
                 # Forward pass
-                loss = model(batch_states, batch_next_states, batch_actions)
-                
+                #loss = model(batch_states, batch_next_states, batch_actions)
+
+                preds = model.predict(batch_states, batch_next_states)
+                loss = torch.nn.functional.mse_loss(torch.as_tensor(preds).to(device), batch_actions)
+
+                physics_id_actions = [gym_inverse_dynamics(physics_env, state.cpu().numpy(), next_state.cpu().numpy()) for state, next_state in zip(batch_states, batch_next_states)]
+
+                physics_id_actions = torch.as_tensor(physics_id_actions).to(device)
+                physics_id_error = torch.norm(physics_id_actions - batch_actions)
+                print(f"Phys ID loss: {physics_id_error.item():.3e}")
+
                 epoch_val_loss += loss.item()
-                num_val_batches += 1
+                epoch_val_physics_id_loss += physics_id_error.item()
+                num_val_batches += 1.
                 
                 # Update validation progress bar with current loss
                 val_pbar.set_postfix({
@@ -157,11 +183,19 @@ def train_inverse_dynamics(states, actions, next_states, model,
         
         avg_val_loss = epoch_val_loss / num_val_batches
         val_losses.append(avg_val_loss)
-        
+        avg_val_physics_id_error = epoch_val_physics_id_loss / num_val_batches
+
+        # Save checkpoint if validation loss improved
+        if model_output_path is not None and avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), model_output_path)
+            print(f"\nNew best validation loss: {avg_val_loss:.6f}. Checkpoint saved to {model_output_path}")
+
         # Update epoch progress bar with epoch summary
         epoch_pbar.set_postfix({
             'train_loss': f'{avg_train_loss:.6f}',
-            'val_loss': f'{avg_val_loss:.6f}'
+            'val_loss': f'{avg_val_loss:.6f}',
+            'best_val_loss': f'{best_val_loss:.6f}'
         })
         
         # Log to wandb
@@ -169,6 +203,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
             "epoch": epoch,
             "train_loss": avg_train_loss,
             "val_loss": avg_val_loss,
+            "val_physics_id_error": avg_val_physics_id_error,
             "learning_rate": optimizer.param_groups[0]['lr']
         })
     
@@ -194,6 +229,13 @@ def create_output_path_from_config(config_path):
     
     return output_path
 
+def get_env_id_from_config(config_path):
+    """Extract environment ID from dataset config."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    return config.get('env_id', 'InvertedPendulumIntegrable-v5')
+
 
 def create_model_path_from_data_path(model_config_path, data_path):
     """Create model output path based on config path."""
@@ -212,7 +254,7 @@ def main():
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--model_config', type=str, required=True,
                        help='Path to model config YAML file (e.g., dynamics/configs/inverse_dynamics/ant_flow.yaml)')
-    parser.add_argument('--num_epochs', type=int, default=400,
+    parser.add_argument('--num_epochs', type=int, default=100,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                        help='Learning rate')
@@ -224,6 +266,8 @@ def main():
                        help='Validation split ratio (default: 0.2)')
     parser.add_argument('--wandb', default='online',
                        help='Disable wandb logging')
+
+    register_custom_envs()
     
     args = parser.parse_args()
     
@@ -232,9 +276,13 @@ def main():
     model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'training_curves.png')
     
+    # Get environment ID from dataset config
+    env_id = get_env_id_from_config(args.dataset_config)
+    
     print(f"Dataset path: {dataset_path}")
     print(f"Model output path: {model_output_path}")
     print(f"Plot output path: {plot_output_path}")
+    print(f"Environment ID: {env_id}")
     
     # Load inverse dynamics dataset
     states, actions, next_states = load_inverse_dynamics_dataset(dataset_path)
@@ -271,14 +319,12 @@ def main():
     model, train_losses, val_losses = train_inverse_dynamics(
         states, actions, next_states, model_from_config,
         args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split
+        args.batch_size, args.device, args.val_split, env_id, model_output_path
     )
     
-    # Save trained model
-    torch.save(model.state_dict(), model_output_path)
-    print(f"Trained model saved to {model_output_path}")
+    # Save final model (overwrites the best checkpoint with the final model)
     print(f"Final training loss: {train_losses[-1]:.6f}, Final validation loss: {val_losses[-1]:.6f}")
-    
+    print(f"Best val loss checkpoint saved to {model_output_path}")
     # Finish wandb run
     wandb.finish()
     

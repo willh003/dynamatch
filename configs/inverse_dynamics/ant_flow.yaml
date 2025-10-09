@@ -1,4 +1,4 @@
-_target_: inverse.learned_inverse_dynamics.FlowInverseDynamics
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
 name: ant_flow_id
 action_dim: 8 
 obs_dim: 107

@@ -1,8 +1,7 @@
 import os
 import argparse
 import yaml
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, Any, Optional
 import numpy as np
 import gymnasium as gym
 from stable_baselines3 import PPO
@@ -12,12 +11,13 @@ import sys
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
-from envs.env_utils import modify_env_integrator
 from tqdm import tqdm
-import copy
-import mujoco
 import zarr
 
+import gymnasium as gym
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics
+from envs.register_envs import register_custom_envs
+register_custom_envs()
 
 def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """
@@ -153,91 +153,66 @@ def collect_transitions_parallel(
     
     # Load the trained model
     model = PPO.load(model_path)
+    physics_env = gym.make(env_id)
     
     # Create vectorized environment
     vec_env = SubprocVecEnv([make_env(env_id, env_kwargs, seed) for _ in range(n_envs)])
     
-    states = []
-    actions = []
-    next_states = []
+    all_states = []
+    all_next_states = []
+    all_actions = []
     all_rewards = []
+    all_gt_id_errors = []
     
     # Initialize environments
     obs = vec_env.reset()
     episode_steps = [0] * n_envs
     episode_dones = [False] * n_envs
-    transitions_collected = 0
-    
-    # Store previous observations for each environment
-    prev_obs = [None] * n_envs
-    prev_infos = [None] * n_envs
-    prev_actions = [None] * n_envs
     
     # Collect transitions in parallel
     with tqdm(total=num_transitions, desc="Collecting transitions") as pbar:
-        while transitions_collected < num_transitions:
-            # Get actions from policy
+        while len(all_states) < num_transitions:
             policy_actions, _ = model.predict(obs, deterministic=deterministic)
-            
-            # Step all environments
             next_obs, rewards, dones, infos = vec_env.step(policy_actions)
             
-            # Store transitions for each environment
             for env_idx in range(n_envs):
-                if not episode_dones[env_idx] and transitions_collected < num_transitions:
-                    # Only store transition if we have a previous observation (not at episode start)
-                    if prev_obs[env_idx] is not None:
-                        # Get state from previous observation (before action was taken)
-                        state = get_state_from_obs(prev_obs[env_idx], prev_infos[env_idx], env_id)
-                        next_state = get_state_from_obs(next_obs[env_idx], infos[env_idx], env_id)
-                        
-                        states.append(state)
-                        actions.append(prev_actions[env_idx])  # Action that was taken
-                        next_states.append(next_state)
-                        all_rewards.append(rewards[env_idx])
-                        
-                        transitions_collected += 1
-                        pbar.update(1)
-                    
-                    episode_steps[env_idx] += 1
-                    
-                    if dones[env_idx] or episode_steps[env_idx] >= max_steps_per_episode:
-                        # Episode finished for this environment
-                        episode_dones[env_idx] = True
-                        episode_steps[env_idx] = 0
-                        # Reset environment
-                        reset_result = vec_env.env_method('reset', indices=[env_idx])
-                        reset_obs, reset_info = reset_result[0]  # Unpack the tuple from the list
-                        obs[env_idx] = reset_obs
-                        episode_dones[env_idx] = False
-                        # Clear previous observation since we're starting a new episode
-                        prev_obs[env_idx] = None
-                        prev_infos[env_idx] = None
-                        prev_actions[env_idx] = None
-                    else:
-                        # Store current observation as previous for next iteration
-                        prev_obs[env_idx] = obs[env_idx]
-                        prev_infos[env_idx] = infos[env_idx]
-                        prev_actions[env_idx] = policy_actions[env_idx]
-                else:
-                    # Store current observation as previous for next iteration (even if episode done)
-                    if not episode_dones[env_idx]:
-                        prev_obs[env_idx] = obs[env_idx]
-                        prev_infos[env_idx] = infos[env_idx]
-                        prev_actions[env_idx] = policy_actions[env_idx]
-            
-            # Update observation for next step
-            obs = next_obs
-    
-    vec_env.close()
-    
-    # Convert to numpy arrays
-    states = np.array(states, dtype=np.float32)
-    actions = np.array(actions, dtype=np.float32)
-    next_states = np.array(next_states, dtype=np.float32)
-    
-    return states, actions, next_states, all_rewards
 
+                if not dones[env_idx]:
+                    
+                    state = get_state_from_obs(obs[env_idx], infos[env_idx], env_id)
+                    next_state = get_state_from_obs(next_obs[env_idx], infos[env_idx], env_id)
+                    action = policy_actions[env_idx]
+                    
+                    all_states.append(state)
+                    all_next_states.append(next_state)
+                    all_actions.append(action)
+                    all_rewards.append(rewards[env_idx])
+                    
+                    error = get_physics_id_error(physics_env, state, next_state, action)
+                    all_gt_id_errors.append(error)
+                    
+                    pbar.update(1)
+
+            obs = next_obs
+
+    vec_env.close()
+
+    all_states = np.array(all_states, dtype=np.float32)
+    all_actions = np.array(all_actions, dtype=np.float32)
+    all_next_states = np.array(all_next_states, dtype=np.float32)
+    all_rewards = np.array(all_rewards, dtype=np.float32)
+    all_gt_id_errors = np.array(all_gt_id_errors, dtype=np.float32)
+
+    return all_states, all_actions, all_next_states, all_rewards, all_gt_id_errors
+
+
+def get_physics_id_error(physics_env, state, next_state, action):
+    """
+    Get the physics ID error for a given set of states, next states, and actions.
+    """
+    id_action = gym_inverse_dynamics(physics_env, state, next_state)
+    error = np.linalg.norm(action - id_action)
+    return error
 
 def save_transitions_to_zarr(
     states: np.ndarray,
@@ -331,6 +306,52 @@ def create_output_path_from_config(config):
     return output_path
 
 
+def validate_id_on_dataset(dataset_path, env_id, max_samples=1000):
+    """Load inverse dynamics dataset from zarr file."""
+    print("=== Loading Inverse Dynamics Dataset ===")
+    
+    store = zarr.open(dataset_path, mode='r')
+    data_group = store['data']
+    meta_group = store['meta']
+    
+    states = data_group['state'][:]
+    actions = data_group['action'][:]
+    next_states = data_group['next_state'][:]
+
+    physics_env = gym.make(env_id)
+
+    id_errors = []
+
+    for state, action, next_state in tqdm(zip(states, actions, next_states), total=min(max_samples, len(states))):
+        error = get_physics_id_error(physics_env, state, next_state, action)
+        id_errors.append(error)
+
+        if len(id_errors) >= max_samples:
+            break    
+
+    print(f"Mean ID error on loaded dataset: {np.mean(id_errors):.3e}, Std ID error: {np.std(id_errors):.3e}, Max ID error: {np.max(id_errors):.3e}, Min ID error: {np.min(id_errors):.3e}")
+    
+    return states, actions, next_states
+
+
+def validate_dataset_saved_data(dataset_path, true_states,true_next_states, true_actions):
+    
+    store = zarr.open(dataset_path, mode='r')
+    data_group = store['data']
+
+    states = data_group['state'][:]
+    actions = data_group['action'][:]
+    next_states = data_group['next_state'][:]
+    
+
+    state_errors = states - true_states
+    next_state_errors = next_states - true_next_states
+    action_errors = actions - true_actions
+
+    print(f"State errors: {np.linalg.norm(state_errors)}")
+    print(f"Next state errors: {np.linalg.norm(next_state_errors)}")
+    print(f"Action errors: {np.linalg.norm(action_errors)}")
+
 def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
     """
     Collect transition dataset by rolling out a policy in parallel and saving to zarr format.
@@ -343,7 +364,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
         Path to the saved zarr file
     """
     # Load config
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     env_id = config['env_id']
@@ -362,7 +383,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
     # Collect transitions in parallel
     print(f"Collecting {num_transitions} transitions using {n_envs} parallel environments...")
 
-    states, actions, next_states, all_rewards = collect_transitions_parallel(
+    states, actions, next_states, all_rewards, all_gt_id_errors = collect_transitions_parallel(
         model_path=model_path,
         env_id=env_id,
         env_kwargs=env_kwargs,
@@ -383,12 +404,31 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
         append=append,
     )
 
-    print(f"Mean reward: {np.mean(all_rewards):.3f}, Std reward: {np.std(all_rewards):.3f}, Max reward: {np.max(all_rewards):.3f}, Min reward: {np.min(all_rewards):.3f}")
+
+    # validate ID on the zarr file
+    
+
+
     print(f"Transition dataset collection complete! Saved to: {saved_path}")
+
+
+    print(f"Mean reward: {np.mean(all_rewards):.3f}, Std reward: {np.std(all_rewards):.3f}, Max reward: {np.max(all_rewards):.3f}, Min reward: {np.min(all_rewards):.3f}")
+
+    validate_dataset_saved_data(saved_path, states, next_states, actions)
+    validate_id_on_dataset(saved_path, env_id)
+    
+    all_gt_id_errors = np.array(all_gt_id_errors)
+    print(f"Mean Physics ID error: {np.mean(all_gt_id_errors):.3e}, Std Physics ID error: {np.std(all_gt_id_errors):.3e}, Max Physics ID error: {np.max(all_gt_id_errors):.3e}, Min Physics ID error: {np.min(all_gt_id_errors):.3e}")
 
     # Create plots
     plot_path = os.path.join(os.path.dirname(output_path),'dataset_plots')
     os.makedirs(plot_path, exist_ok=True)
+    
+    plt.hist(all_gt_id_errors, label="Physics ID errors", color="green", alpha=0.5, bins=50)
+    plt.legend()
+    plt.title(f"Physics ID errors distribution: ({len(all_gt_id_errors)} transitions)")
+    plt.savefig(os.path.join(plot_path, "collected_physics_id_errors_dist.png"))
+    plt.clf()
     
     plt.hist(actions.flatten(), label="actions", color="blue", alpha=0.5, bins=50)
     plt.legend()
@@ -423,7 +463,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
 def parse_args():
     parser = argparse.ArgumentParser(description="Collect transition dataset by rolling out an RL policy in parallel.")
     parser.add_argument("--config", required=True, help="Path to dataset config YAML file")
-    parser.add_argument("--n_envs", type=int, default=4, help="Number of parallel environments (default: 4)")
+    parser.add_argument("--n_envs", type=int, default=16, help="Number of parallel environments (default: 4)")
     return parser.parse_args()
 
 

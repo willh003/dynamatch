@@ -5,9 +5,9 @@ name: pendulum
 model_path: /home/wph52/weird/dynamics/rl/runs/InvertedPendulum-v5_20250923_150900/models/best_model.zip
 env_id: InvertedPendulumIntegrable-v5
 source_env_id: InvertedPendulumIntegrable-v5
-buffer_path: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_integrable_large/buffer.zarr
+buffer_path: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_integrable_huge/buffer.zarr
 env_kwargs: null
-num_episodes: 100
+num_episodes: 1000
 max_steps_per_episode: 1000
 deterministic: false
 seed: null
