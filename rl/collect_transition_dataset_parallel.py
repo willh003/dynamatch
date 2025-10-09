@@ -329,7 +329,8 @@ def validate_id_on_dataset(dataset_path, env_id, max_samples=1000):
         if len(id_errors) >= max_samples:
             break    
 
-    print(f"Mean ID error on loaded dataset: {np.mean(id_errors):.3e}, Std ID error: {np.std(id_errors):.3e}, Max ID error: {np.max(id_errors):.3e}, Min ID error: {np.min(id_errors):.3e}")
+    
+    print(f"Mean ID error on {len(id_errors)} samples from loaded dataset: {np.mean(id_errors):.3e}, Std ID error: {np.std(id_errors):.3e}, Max ID error: {np.max(id_errors):.3e}, Min ID error: {np.min(id_errors):.3e}")
     
     return states, actions, next_states
 

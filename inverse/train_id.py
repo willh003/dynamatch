@@ -2,6 +2,7 @@ import argparse
 import os
 import yaml
 import torch
+import numpy as np
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import zarr
@@ -39,10 +40,25 @@ def load_inverse_dynamics_dataset(dataset_path):
     return states, actions, next_states
 
 
+def quick_validate_id(dataset, env, max_samples=2000):
+    """Quickly validate the ID model on a dataset."""
+    print("=== Quick Validating ID Model ===")
+    errors = []
+    for i in tqdm(range(min(max_samples, len(dataset)))):
+        state = dataset[i][0]
+        action = dataset[i][1]
+        next_state = dataset[i][2]
+        error = np.linalg.norm(gym_inverse_dynamics(env, state.cpu().numpy(), next_state.cpu().numpy()) - action.cpu().numpy())
+        
+        errors.append(error)
+
+    print(f"Mean ID error: {np.mean(errors):.3e}, Std ID error: {np.std(errors):.3e}, Max ID error: {np.max(errors):.3e}, Min ID error: {np.min(errors):.3e}")
+
+
 def train_inverse_dynamics(states, actions, next_states, model, 
                           num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2, env_id=None, 
-                          model_output_path=None):
+                          model_output_path=None, compute_physics_id_loss=False):
     """Train the Inverse Dynamics model."""
     print("=== Training Inverse Dynamics ===")
 
@@ -63,7 +79,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
     
     # Create dataset and split into train/val
     dataset = TensorDataset(states_tensor, actions_tensor, next_states_tensor)
-    
+
     # Calculate split sizes
     total_size = len(dataset)
     val_size = int(val_split * total_size)
@@ -71,7 +87,9 @@ def train_inverse_dynamics(states, actions, next_states, model,
     
     # Split dataset
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-    
+        
+    quick_validate_id(train_dataset, physics_env)
+
     # Create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
@@ -165,14 +183,16 @@ def train_inverse_dynamics(states, actions, next_states, model,
                 preds = model.predict(batch_states, batch_next_states)
                 loss = torch.nn.functional.mse_loss(torch.as_tensor(preds).to(device), batch_actions)
 
-                physics_id_actions = [gym_inverse_dynamics(physics_env, state.cpu().numpy(), next_state.cpu().numpy()) for state, next_state in zip(batch_states, batch_next_states)]
+                if compute_physics_id_loss:
+                    physics_id_actions = [gym_inverse_dynamics(physics_env, state.cpu().numpy(), next_state.cpu().numpy()) for state, next_state in zip(batch_states, batch_next_states)]
 
-                physics_id_actions = torch.as_tensor(physics_id_actions).to(device)
-                physics_id_error = torch.norm(physics_id_actions - batch_actions)
-                print(f"Phys ID loss: {physics_id_error.item():.3e}")
+                    physics_id_actions = torch.as_tensor(physics_id_actions).to(device)
+                    physics_id_error = torch.norm(physics_id_actions - batch_actions, dim=1)
+                    physics_id_error = physics_id_error.mean()
+                    print(f"Phys ID loss: {physics_id_error.item():.3e}")
+                    epoch_val_physics_id_loss += physics_id_error.item()
 
                 epoch_val_loss += loss.item()
-                epoch_val_physics_id_loss += physics_id_error.item()
                 num_val_batches += 1.
                 
                 # Update validation progress bar with current loss

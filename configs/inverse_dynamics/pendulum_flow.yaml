@@ -8,4 +8,4 @@ down_dims: [32, 64, 128]
 num_inference_steps: 10
 
 
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable/pendulum_flow_id_20251008_142909_inverse_dynamics.pth
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable_large/pendulum_flow_id_20251008_212557_inverse_dynamics.pth
