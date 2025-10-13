@@ -1,0 +1,12 @@
+#_target_: generative_policies.action_translation.FlowBC
+_target_: generative_policies.action_translation.FlowBC
+name: ant_bc_modphys
+action_dim: 8
+obs_dim: 107
+
+
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
+num_inference_steps: 10
+
+checkpoint_path: null

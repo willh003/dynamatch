@@ -1,0 +1,28 @@
+_target_: null
+name: ant_modified_physics
+
+# Dataset collection parameters
+model_path: /home/wph52/weird/dynamics/rl/runs/AntModifiedPhysics-v1_20251010_130839/models/best_model.zip
+env_id: AntModifiedPhysics-v1
+buffer_dir: /home/wph52/weird/dynamics/datasets/ant/sequence/ant_modified_physics/ant_flow_original_id
+env_kwargs: null
+num_episodes: 500
+max_steps_per_episode: 200
+deterministic: false
+seed: null
+append: false
+
+shape_meta:
+  # acceptable types: rgb, low_dim
+  obs:
+    "full_obs":
+      shape: [107]
+      type: low_dim
+  action:
+    shape: [8]
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: False
+normalize_lowdim: False
+val_ratio: 0.20

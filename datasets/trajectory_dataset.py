@@ -31,7 +31,7 @@ class TrajectoryDatasetInterface(Dataset):
 
 def make_trajectory_dataset(
     name: str,
-    buffer_path: str,
+    buffer_dir: str,
     shape_meta: dict,
     seq_len: int,
     history_len: int = 1,
@@ -44,7 +44,7 @@ def make_trajectory_dataset(
     
     Args:
         name: Dataset name
-        buffer_path: Path to the zarr buffer file
+        buffer_dir: Path to the zarr buffer file
         shape_meta: Shape metadata for observations and actions
         seq_len: Sequence length for training
         history_len: Number of history frames to include
@@ -58,7 +58,7 @@ def make_trajectory_dataset(
     # Training dataset
     train_set = TrajectoryDataset(
         name=name,
-        buffer_path=buffer_path,
+        buffer_dir=buffer_dir,
         shape_meta=shape_meta,
         seq_len=seq_len,
         history_len=history_len,
@@ -82,7 +82,7 @@ class TrajectoryDataset(TrajectoryDatasetInterface):
     def __init__(
         self,
         name: str,
-        buffer_path: str,
+        buffer_dir: str,
         shape_meta: dict,
         seq_len: int,
         history_len: int = 1,
@@ -96,7 +96,7 @@ class TrajectoryDataset(TrajectoryDatasetInterface):
         
         Args:
             name: Dataset name
-            buffer_path: Path to the zarr buffer file
+            buffer_dir: Path to the zarr buffer file
             shape_meta: Shape metadata for observations and actions
             seq_len: Sequence length for training
             history_len: Number of history frames to include
@@ -126,8 +126,8 @@ class TrajectoryDataset(TrajectoryDatasetInterface):
         self._action_shape = tuple(shape_meta["action"]["shape"])
 
         # Compressed buffer to store episode data
-        self.buffer_dir = pathlib.Path(buffer_path).parent
-        self.buffer = self._init_buffer(buffer_path)
+        self.buffer_dir = pathlib.Path(buffer_dir).parent
+        self.buffer = self._init_buffer(buffer_dir)
 
         # Create training-validation split
         num_episodes = self.buffer.num_episodes
@@ -152,7 +152,7 @@ class TrajectoryDataset(TrajectoryDatasetInterface):
         if normalize_action:
             self.action_normalizer = self._init_action_normalizer()
 
-    def _init_buffer(self, buffer_path):
+    def _init_buffer(self, buffer_dir):
         """Initialize the compressed trajectory buffer."""
         # Create metadata
         metadata = {}
@@ -164,8 +164,8 @@ class TrajectoryDataset(TrajectoryDatasetInterface):
         metadata["action"] = {"shape": self._action_shape, "dtype": np.float32}
 
         # Load buffer
-        buffer = CompressedTrajectoryBuffer(storage_path=buffer_path, metadata=metadata)
-        assert buffer.restored, f"Buffer not found at {buffer_path}"
+        buffer = CompressedTrajectoryBuffer(storage_path=buffer_dir, metadata=metadata)
+        assert buffer.restored, f"Buffer not found at {buffer_dir}"
         return buffer
 
     def _init_lowdim_normalizer(self):

@@ -38,7 +38,7 @@ def quick_validate_id(dataset, env, max_samples=2000):
 def train_inverse_dynamics(states, actions, next_states, model, 
                           num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2, env_id=None, 
-                          model_output_path=None, compute_physics_id_loss=False):
+                          model_output_path=None, validate_physics_id=False):
     """Train the Inverse Dynamics model."""
     print("=== Training Inverse Dynamics ===")
 
@@ -68,7 +68,8 @@ def train_inverse_dynamics(states, actions, next_states, model,
     # Split dataset
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         
-    quick_validate_id(train_dataset, physics_env)
+    if validate_physics_id:   
+        quick_validate_id(train_dataset, physics_env)
 
     # Create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -163,7 +164,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
                 preds = model.predict(batch_states, batch_next_states)
                 loss = torch.nn.functional.mse_loss(torch.as_tensor(preds).to(device), batch_actions)
 
-                if compute_physics_id_loss:
+                if validate_physics_id:
                     physics_id_actions = [gym_inverse_dynamics(physics_env, state.cpu().numpy(), next_state.cpu().numpy()) for state, next_state in zip(batch_states, batch_next_states)]
 
                     physics_id_actions = torch.as_tensor(physics_id_actions).to(device)
@@ -232,8 +233,9 @@ def create_model_path_from_data_path(model_config_path, data_path):
     model_name = model_config['name']
     output_dir = os.path.dirname(data_path)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_inverse_dynamics.pth')
-    return model_path
+    path_name = f'id_{model_name}_{timestamp}'
+    model_path = os.path.join(output_dir, f'{path_name}.pth')
+    return model_path, path_name
 
 
 def main():
@@ -252,6 +254,7 @@ def main():
                        help='Device to use for training')
     parser.add_argument('--val_split', type=float, default=0.2,
                        help='Validation split ratio (default: 0.2)')
+    parser.add_argument('--validate_physics_id', type=bool, default=False, help="Whether to validate physics ID (default: False)")
     parser.add_argument('--wandb', default='online',
                        help='Disable wandb logging')
 
@@ -261,7 +264,7 @@ def main():
     
     # Create paths based on config
     dataset_path = get_transition_path_from_dataset_config(args.dataset_config)
-    model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
+    model_output_path, model_path_name = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'training_curves.png')
     
     # Get environment ID from dataset config
@@ -274,7 +277,6 @@ def main():
     
     # Load inverse dynamics dataset
     states, actions, next_states = load_transition_dataset(dataset_path)
-
     
     # Build model from config
     print(f"Building inverse dynamics model from model config: {args.model_config}")
@@ -282,6 +284,9 @@ def main():
 
     with open(args.model_config, 'r', encoding='utf-8') as f:
         model_config_dict = yaml.safe_load(f)
+    with open(args.dataset_config, 'r', encoding='utf-8') as f:
+        dataset_config = yaml.safe_load(f)
+    
     train_config_dict = {
             "num_epochs": args.num_epochs,
             "learning_rate": args.learning_rate,
@@ -291,13 +296,14 @@ def main():
             "config_path": args.dataset_config,
         }
     train_config_dict.update(model_config_dict)
-    exp_name = train_config_dict['name']
-    wandb_tags = [exp_name, 'id']
+    model_name = model_config_dict['name']
+    dataset_name = dataset_config['name']
+    wandb_tags = [model_name, dataset_name, 'id']
     config_name = os.path.splitext(os.path.basename(args.dataset_config))[0]
     wandb.init(
         project="dynamics",
         entity="willhu003",
-        name=f"inverse_dynamics_{config_name}",
+        name=model_path_name,
         mode=args.wandb,
         config=train_config_dict,
         tags=wandb_tags
@@ -307,7 +313,7 @@ def main():
     model, train_losses, val_losses = train_inverse_dynamics(
         states, actions, next_states, model_from_config,
         args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split, env_id, model_output_path
+        args.batch_size, args.device, args.val_split, env_id, model_output_path, args.validate_physics_id
     )
     
     # Save final model (overwrites the best checkpoint with the final model)

@@ -1,6 +1,7 @@
 import zarr
 import numpy as np
 import yaml
+import os
 
 def load_transition_dataset(dataset_path):
     """Load transition dataset from zarr file."""
@@ -28,22 +29,25 @@ def get_transition_path_from_dataset_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
-    buffer_path = config['buffer_path']
+    buffer_dir = config['buffer_dir']
     # Replace 'sequence' with 'inverse_dynamics' in the path
-    output_path = buffer_path.replace('/sequence/', '/transitions/')
+    output_dir = buffer_dir.replace('/sequence/', '/transitions/')
+
+    buffer_path = os.path.join(output_dir, 'buffer.zarr')
     
-    return output_path
+    return buffer_path
 
 
 
 def get_relabeled_actions_path_from_config(config_path):
     """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
     with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    
+        dataset_config = yaml.safe_load(f)
 
-    buffer_path = config['buffer_path']
-    # Replace 'sequence' with 'relabeled_actions' in the path
-    output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
+    buffer_dir = dataset_config['buffer_dir']
+    output_dir = buffer_dir.replace('/sequence/', '/relabeled_actions/')
     
-    return output_path
+    buffer_path = os.path.join(output_dir,  'buffer.zarr')
+    
+    
+    return buffer_path

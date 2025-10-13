@@ -1,13 +1,12 @@
-_target_: datasets.trajectory_dataset.make_trajectory_dataset
-name: pendulum
+_target_: null
+name: ant_5m_large
 
 # Dataset collection parameters
 model_path: /home/wph52/weird/dynamics/rl/runs/Ant-v5_20251002_211516/models/best_model.zip
 env_id: AntIntegrable-v1
-source_env_id: AntIntegrable-v1
-buffer_path: /home/wph52/weird/dynamics/datasets/ant/sequence/ant_5m_huge/buffer.zarr
+buffer_dir: /home/wph52/weird/dynamics/datasets/ant/transitions/ant_5m_large
 env_kwargs: null
-num_episodes: 1000
+num_episodes: 100
 max_steps_per_episode: 1000
 deterministic: false
 seed: null

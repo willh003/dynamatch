@@ -1,0 +1,15 @@
+#_target_: generative_policies.action_translation.FlowActionPriorConditionedTranslator
+_target_: generative_policies.action_translation.FlowActionPriorConditionedTranslator
+name: ant_flow_og_hf
+action_dim: 8 
+obs_dim: 107
+
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
+num_inference_steps: 10
+
+# ant og -> hf small dataset (10 rollouts)
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_original_high_friction/translator_ant_flow_og_hf_20251010_205659.pth
+
+# ant og -> hf large dataset (100 rollouts)
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_original_high_friction_large/translator_ant_flow_og_hf_20251010_211123.pth

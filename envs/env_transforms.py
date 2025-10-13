@@ -3,6 +3,90 @@ import torch
 import torch.nn as nn
 import gymnasium as gym
 
+class ObsFromDictWrapper(gym.Wrapper):
+    def __init__(self, env, obs_key='observation'):
+        super().__init__(env)
+        self.obs_key = obs_key
+        
+        # Update observation space to match the extracted observation
+        if isinstance(env.observation_space, gym.spaces.Dict):
+            if obs_key not in env.observation_space.spaces:
+                raise KeyError(f"Key '{obs_key}' not found in observation space keys: {list(env.observation_space.spaces.keys())}")
+            self.observation_space = env.observation_space.spaces[obs_key]
+        else:
+            raise ValueError("Environment observation space must be a Dict space")
+    
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        return obs[self.obs_key], reward, terminated, truncated, info
+    
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        return obs[self.obs_key], info
+
+
+class ModifyFrictionWrapper(gym.Wrapper):
+    def __init__(self, env, friction_coeffs=(1.0, 0.5, 0.5)):
+        super().__init__(env)
+
+        for i in range(self.unwrapped.model.ngeom):
+            self.unwrapped.model.geom_friction[i] = list(friction_coeffs)
+
+class ModifyPhysicsWrapper(gym.Wrapper):
+    """
+    Wrapper to modify MuJoCo physics parameters for sim2real transfer testing.
+    
+    Args:
+        friction_mult: Multiplier for geom_friction [tangential, torsional, rolling].
+                      Controls sliding and rotational resistance at contacts.
+        damping_mult: Multiplier for dof_damping. Joint velocity damping coefficient.
+        mass_mult: Multiplier for body_mass. Inertial mass of each body.
+        armature_mult: Multiplier for dof_armature. Rotor inertia reflected to joint.
+        gear_mult: Multiplier for actuator_gear. Actuator force/torque transmission ratio.
+        solref_timeconst_mult: Multiplier for solref[0]. Contact stiffness time constant 
+                               (lower = stiffer, higher = softer/more compliant).
+        solref_dampratio_mult: Multiplier for solref[1]. Contact damping ratio 
+                               (1.0 = critical, <1.0 = bouncy, >1.0 = overdamped).
+        solimp_dmin_mult: Multiplier for solimp[0]. Min penetration distance for 
+                          corrective force activation.
+        solimp_dmax_mult: Multiplier for solimp[1]. Max penetration distance for 
+                          full corrective force.
+    """
+    def __init__(self, env, friction_mult=1.0, damping_mult=1.0, mass_mult=1.0,
+                 armature_mult=1.0, gear_mult=1.0, solref_timeconst_mult=1.0,
+                 solref_dampratio_mult=1.0, solimp_dmin_mult=1.0, solimp_dmax_mult=1.0):
+        super().__init__(env)
+        
+        # Modify friction
+        for i in range(self.unwrapped.model.ngeom):
+            self.unwrapped.model.geom_friction[i] *= friction_mult
+        
+        # Modify damping
+        for i in range(self.unwrapped.model.njnt):
+            self.unwrapped.model.dof_damping[i] *= damping_mult
+        
+        # Modify masses
+        for i in range(self.unwrapped.model.nbody):
+            self.unwrapped.model.body_mass[i] *= mass_mult
+        
+        # Modify armature (rotor inertia)
+        for i in range(self.unwrapped.model.njnt):
+            self.unwrapped.model.dof_armature[i] *= armature_mult
+        
+        # Modify actuator gear ratios
+        for i in range(self.unwrapped.model.nu):
+            self.unwrapped.model.actuator_gear[i] *= gear_mult
+        
+        # Modify contact solver reference (solref)
+        for i in range(self.unwrapped.model.ngeom):
+            self.unwrapped.model.geom_solref[i, 0] *= solref_timeconst_mult
+            self.unwrapped.model.geom_solref[i, 1] *= solref_dampratio_mult
+        
+        # Modify contact solver impedance (solimp)
+        for i in range(self.unwrapped.model.ngeom):
+            self.unwrapped.model.geom_solimp[i, 0] *= solimp_dmin_mult
+            self.unwrapped.model.geom_solimp[i, 1] *= solimp_dmax_mult
+
 class IntegrableEnvWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -22,9 +106,7 @@ class ActionAddWrapper(gym.Wrapper):
         self.action_add = action_add
 
     def step(self, action):
-        print(f"Action: {action}")
         action = action + self.action_add
-        print(f"Modified Action: {action}")
         return super().step(action)
 
 class ActionNonlinearWrapper(gym.Wrapper):
@@ -34,13 +116,6 @@ class ActionNonlinearWrapper(gym.Wrapper):
     
     def step(self, action):
         return super().step(self.action_nonlinear_transformation(action))
-
-class ModifyFrictionWrapper(gym.Wrapper):
-    def __init__(self, env, friction_coeffs=(1.0, 0.5, 0.5)):
-        super().__init__(env)
-
-        for i in range(self.unwrapped.model.ngeom):
-            self.unwrapped.model.geom_friction[i] = list(friction_coeffs)
 
 
 class ActionTransformMLP(nn.Module):

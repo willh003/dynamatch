@@ -3,15 +3,22 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
+from stable_baselines3.common.monitor import Monitor
 import torch
 from tqdm import tqdm
 import sys
+import imageio.v2 as imageio
+from pathlib import Path
+
+from cluster_utils import set_cluster_graphics_vars
 
 # Add parent directories to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import load_source_policy_from_config, load_inverse_dynamics_model_from_config
 from physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
+from envs.env_utils import get_state_from_obs
 
 
 def rollout_policy(env, policy, deterministic=False, max_steps=1000):
@@ -28,7 +35,7 @@ def rollout_policy(env, policy, deterministic=False, max_steps=1000):
     """
     print("Rolling out policy...")
     
-    obs, _ = env.reset()
+    obs, info = env.reset()
     states = []
     actions = []
     next_states = []
@@ -40,15 +47,17 @@ def rollout_policy(env, policy, deterministic=False, max_steps=1000):
         action, _ = policy.predict(obs, deterministic=deterministic)
         
         # Store current state and action
-        states.append(obs.copy())
+        state = get_state_from_obs(obs, info, env.spec.id)
+        states.append(state.copy())
         actions.append(action.copy())
         
         # Take step
-        next_obs, reward, terminated, truncated, _ = env.step(action)
+        next_obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
         
         # Store next state and reward
-        next_states.append(next_obs.copy())
+        next_state = get_state_from_obs(next_obs, info, env.spec.id)
+        next_states.append(next_state.copy())
         rewards.append(reward)
         dones.append(done)
         
@@ -67,7 +76,7 @@ def rollout_policy(env, policy, deterministic=False, max_steps=1000):
     }
 
 
-def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, device='cpu'):
+def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, compute_physics_id=True, device='cpu'):
     """
     Evaluate both learned and physics-based inverse dynamics on the trajectory.
     
@@ -116,15 +125,14 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, device='cp
         learned_actions.append(predicted_action)
         
         # Physics-based inverse dynamics
-        try:
+        if compute_physics_id:
             physics_action = gym_inverse_dynamics(physics_env, state, next_state)
             physics_error = np.linalg.norm(physics_action - true_action)
             physics_errors.append(physics_error)
             physics_actions.append(physics_action)
-        except Exception as e:
-            print(f"Physics inverse dynamics failed at step {i}: {e}")
-            physics_errors.append(np.nan)
-            physics_actions.append(np.full_like(true_action, np.nan))
+        else:
+            physics_errors.append(0.0)
+            physics_actions.append(np.zeros_like(true_action))
     
     return {
         'learned_errors': np.array(learned_errors),
@@ -179,9 +187,9 @@ def plot_errors(learned_errors, physics_errors, output_path='inverse_dynamics_er
     print(f"Physics ID - Mean: {np.nanmean(physics_errors):.4f}, Std: {np.nanstd(physics_errors):.4f}")
 
 
-def plot_pendulum_actions(trajectory, learned_actions, physics_actions, output_path='pendulum_actions.png'):
+def plot_actions_over_time(trajectory, learned_actions, physics_actions, output_path='actions_over_time.png'):
     """
-    Plot actions over time for pendulum environments.
+    Plot actions over time for any environment with multiple action dimensions.
     
     Args:
         trajectory: Dictionary containing true actions
@@ -189,7 +197,7 @@ def plot_pendulum_actions(trajectory, learned_actions, physics_actions, output_p
         physics_actions: Array of physics model actions
         output_path: Path to save the plot
     """
-    print("Plotting pendulum actions...")
+    print("Plotting actions over time...")
     
     true_actions = trajectory['actions']
     steps = np.arange(len(true_actions))
@@ -220,7 +228,85 @@ def plot_pendulum_actions(trajectory, learned_actions, physics_actions, output_p
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print("Pendulum action plots saved to", output_path)
+    print("Action plots saved to", output_path)
+
+
+def record_trajectory_video(env_id, trajectory, policy, output_dir, deterministic=False):
+    """
+    Record a video and GIF of the trajectory using the policy.
+    
+    Args:
+        env_id: Environment ID
+        trajectory: Dictionary containing the trajectory data
+        policy: Policy to use for actions
+        output_dir: Directory to save the video
+        deterministic: Whether to use deterministic actions
+    """
+    print("Recording trajectory video...")
+    
+    # Create video environment with RGB rendering
+    video_env = gym.make(env_id, render_mode="rgb_array")
+    video_env = Monitor(video_env)
+    
+    # Record video
+    video_path = os.path.join(output_dir, "trajectory_video")
+    video_env = RecordVideo(
+        video_env,
+        video_folder=video_path,
+        episode_trigger=lambda ep_id: ep_id == 0,  # Record only the first episode
+        name_prefix="trajectory",
+        disable_logger=True,
+    )
+    
+    # Reset environment
+    obs, info = video_env.reset()
+    
+    # Step through the trajectory
+    for i, action in enumerate(trajectory['actions']):
+        # Use the policy to get action (in case we want to use learned actions instead)
+        if hasattr(policy, 'predict'):
+            policy_action, _ = policy.predict(obs, deterministic=deterministic)
+            # Use the original action from trajectory for consistency
+            action_to_step = action
+        else:
+            action_to_step = action
+            
+        # Ensure action is the right shape
+        if len(action_to_step.shape) > 1:
+            action_to_step = action_to_step[0]
+            
+        obs, reward, terminated, truncated, info = video_env.step(action_to_step)
+        
+        if terminated or truncated:
+            break
+    
+    video_env.close()
+    
+    # Convert MP4 to GIF
+    mp4_files = sorted(Path(video_path).glob("trajectory-episode-*.mp4"))
+    if mp4_files:
+        mp4_file = mp4_files[0]
+        reader = imageio.get_reader(str(mp4_file))
+        meta = reader.get_meta_data()
+        fps = meta["fps"] if "fps" in meta else 30
+        
+        # Limit GIF to reasonable number of frames
+        max_frames = 200
+        frames = []
+        for idx, frame in enumerate(reader):
+            if idx >= max_frames:
+                break
+            frames.append(frame)
+        
+        if len(frames) > 0:
+            gif_path = os.path.join(output_dir, "trajectory.gif")
+            imageio.mimsave(gif_path, frames, duration=1.0 / fps)
+            print(f"Video saved to: {video_path}")
+            print(f"GIF saved to: {gif_path}")
+        else:
+            print("No frames captured for GIF")
+    else:
+        print("No MP4 file found to convert to GIF")
 
 
 def main():
@@ -237,6 +323,8 @@ def main():
                        help='Device for learned model')
     parser.add_argument('--output_dir', type=str, default='./eval_results',
                        help='Directory to save results')
+    parser.add_argument('--physics_id', action='store_true', default=False,
+                       help='Compute physics ID error')
     parser.add_argument('--deterministic', action='store_true', default=False,
                        help='Use deterministic actions instead of stochastic. Defaults to false for getting more state coverage')
     
@@ -247,6 +335,7 @@ def main():
     
     # Register custom environments
     register_custom_envs()
+    set_cluster_graphics_vars()
     
     # Load policy
     print("Loading policy...")
@@ -267,16 +356,18 @@ def main():
     print(f"Rollout completed: {len(trajectory['states'])} steps")
     
     # Evaluate inverse dynamics
-    errors = evaluate_inverse_dynamics(trajectory, learned_model, physics_env, args.device)
+    errors = evaluate_inverse_dynamics(trajectory, learned_model, physics_env, args.physics_id, args.device)
     
     # Plot results
     plot_path = os.path.join(args.output_dir, 'inverse_dynamics_errors.png')
     plot_errors(errors['learned_errors'], errors['physics_errors'], plot_path)
     
-    # Plot pendulum actions if it's a pendulum environment
-    if "pendulum" in args.env_id.lower():
-        pendulum_plot_path = os.path.join(args.output_dir, 'pendulum_actions.png')
-        plot_pendulum_actions(trajectory, errors['learned_actions'], errors['physics_actions'], pendulum_plot_path)
+    # Plot actions over time for any environment
+    actions_plot_path = os.path.join(args.output_dir, 'actions_over_time.png')
+    plot_actions_over_time(trajectory, errors['learned_actions'], errors['physics_actions'], actions_plot_path)
+    
+    # Record video and GIF of the trajectory
+    record_trajectory_video(args.env_id, trajectory, policy, args.output_dir, args.deterministic)
     
     # Save trajectory data
     trajectory_path = os.path.join(args.output_dir, 'trajectory.npz')

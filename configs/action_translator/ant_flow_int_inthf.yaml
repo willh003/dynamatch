@@ -1,0 +1,17 @@
+#_target_: generative_policies.action_translation.FlowActionPriorConditionedTranslator
+_target_: generative_policies.action_translation.FlowActionPriorConditionedTranslator
+name: ant_flow_int_inthf
+action_dim: 8 
+obs_dim: 107
+
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
+num_inference_steps: 10
+
+# Path to the trained action translator checkpoint
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_high_friction_physics/ant_flow_20251008_123006_translator.pth
+
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_integrable_high_friction/translator_ant_flow_20251009_184046.pth
+
+# from same dataset as working for mlp
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_integrable_high_friction/translator_ant_flow_20251009_184046.pth

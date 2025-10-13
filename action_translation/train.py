@@ -13,6 +13,7 @@ import sys
 import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import build_action_translator_from_config
+from utils.data_utils import get_relabeled_actions_path_from_config
 
 def load_action_translation_dataset(dataset_path):
     """Load action translation dataset from zarr file."""
@@ -36,8 +37,8 @@ def load_action_translation_dataset(dataset_path):
 
 
 def train_action_translator(states,model, original_actions, shifted_actions, 
-                          obs_dim, action_dim, num_epochs=100, learning_rate=1e-3, 
-                          batch_size=64, device='cpu', val_split=0.2):
+                        num_epochs=100, learning_rate=1e-3, 
+                          batch_size=64, device='cpu', val_split=0.2, model_output_path=None):
     """Train the Action Translator model."""
     print("=== Training Action Translator ===")
     
@@ -90,6 +91,7 @@ def train_action_translator(states,model, original_actions, shifted_actions,
     # Training loop
     train_losses = []
     val_losses = []
+    best_val_loss = float('inf')
     
     # Create outer progress bar for epochs
     epoch_pbar = tqdm(range(num_epochs), desc="Epochs", position=0, leave=True)
@@ -164,10 +166,17 @@ def train_action_translator(states,model, original_actions, shifted_actions,
         avg_val_loss = epoch_val_loss / num_val_batches
         val_losses.append(avg_val_loss)
         
+        # Save model if validation loss improved
+        if model_output_path is not None and avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), model_output_path)
+            print(f"\nNew best validation loss: {avg_val_loss:.6f}. Model saved to {model_output_path}")
+        
         # Update epoch progress bar with epoch summary
         epoch_pbar.set_postfix({
             'train_loss': f'{avg_train_loss:.6f}',
-            'val_loss': f'{avg_val_loss:.6f}'
+            'val_loss': f'{avg_val_loss:.6f}',
+            'best_val_loss': f'{best_val_loss:.6f}'
         })
         
         # Log to wandb
@@ -175,6 +184,7 @@ def train_action_translator(states,model, original_actions, shifted_actions,
             "epoch": epoch,
             "train_loss": avg_train_loss,
             "val_loss": avg_val_loss,
+            "best_val_loss": best_val_loss,
             "learning_rate": optimizer.param_groups[0]['lr']
         })
     
@@ -189,16 +199,6 @@ def train_action_translator(states,model, original_actions, shifted_actions,
     
     return model, train_losses, val_losses
 
-def create_output_path_from_config(config_path):
-    """Create output path by replacing 'sequence' with 'relabeled_actions' in the buffer path."""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    
-    buffer_path = config['buffer_path']
-    # Replace 'sequence' with 'relabeled_actions' in the path
-    output_path = buffer_path.replace('/sequence/', '/relabeled_actions/')
-    
-    return output_path
 
 def create_model_path_from_data_path(model_config_path, data_path):
     """Create model output path based on config path."""
@@ -207,8 +207,9 @@ def create_model_path_from_data_path(model_config_path, data_path):
     model_name = model_config['name']
     output_dir = os.path.dirname(data_path)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = os.path.join(output_dir, f'{model_name}_{timestamp}_translator.pth')
-    return model_path
+    path_name = f'translator_{model_name}_{timestamp}'
+    model_path = os.path.join(output_dir, f'{path_name}.pth')
+    return model_path, path_name
 
 def main():
     parser = argparse.ArgumentParser(description='Train action translator from action translation dataset')
@@ -216,7 +217,7 @@ def main():
                        help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
     parser.add_argument('--model_config', type=str, required=True,
                        help='Path to model config YAML file (e.g., dynamics/configs/action_translator/ant_mlp.yaml)')
-    parser.add_argument('--num_epochs', type=int, default=100,
+    parser.add_argument('--num_epochs', type=int, default=1500,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                        help='Learning rate')
@@ -235,8 +236,8 @@ def main():
     # Extract config name for run name
     
     # Create paths based on config
-    dataset_path = create_output_path_from_config(args.dataset_config)
-    model_output_path = create_model_path_from_data_path(args.model_config, dataset_path)
+    dataset_path = get_relabeled_actions_path_from_config(args.dataset_config)
+    model_output_path, model_path_name = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'action_distributions.png')
     
     print(f"Dataset path: {dataset_path}")
@@ -246,16 +247,12 @@ def main():
     # Load action translation dataset
     states, original_actions, shifted_actions = load_action_translation_dataset(dataset_path)
     
-    # Determine dimensions from data
-    obs_dim = states.shape[1]
-    action_dim = original_actions.shape[1]
-    
     # Optionally build model from config for flexible architectures
     print(f"Building action translator from model config: {args.model_config}")
     # Load the YAML config first
     with open(args.model_config, 'r', encoding='utf-8') as f:
         model_config_dict = yaml.safe_load(f)
-    model_from_config = build_action_translator_from_config(model_config_dict, obs_dim, action_dim, load_checkpoint=False)
+    model_from_config = build_action_translator_from_config(model_config_dict, load_checkpoint=False)
 
     train_config_dict = {
             "num_epochs": args.num_epochs,
@@ -263,16 +260,18 @@ def main():
             "batch_size": args.batch_size,
             "device": args.device,
             "val_split": args.val_split,
-            "config_path": args.dataset_config,
+            "dataset_config_path": args.dataset_config,
+            "model_config_path": args.model_config,
         }
     train_config_dict.update(model_config_dict)
-    exp_name = train_config_dict['name']
-    wandb_tags = [exp_name, 'translator']
+    model_name = model_config_dict['name']
+    wandb_tags = [model_name, 'translator']
     config_name = os.path.splitext(os.path.basename(args.dataset_config))[0]
+
     wandb.init(
         project="dynamics",
         entity="willhu003",
-        name=f"action_translator_{config_name}",
+        name=model_path_name,
         mode=args.wandb,
         config=train_config_dict,
         tags=wandb_tags
@@ -281,13 +280,11 @@ def main():
     # Train action translator
     model, train_losses, val_losses = train_action_translator(
         states, model_from_config, original_actions, shifted_actions,
-        obs_dim, action_dim, args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split
+        args.num_epochs, args.learning_rate, 
+        args.batch_size, args.device, args.val_split, model_output_path
     )
     
-    # Save trained model
-    torch.save(model.state_dict(), model_output_path)
-    print(f"Trained model saved to {model_output_path}")
+    print(f"Training completed. Best model was saved during training to {model_output_path}")
     
     # Finish wandb run
     wandb.finish()

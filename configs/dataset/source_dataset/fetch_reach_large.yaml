@@ -1,0 +1,16 @@
+_target_: null
+name: fetch_reach_large
+
+# Dataset collection parameters
+model_path: /home/wph52/weird/dynamics/rl/runs/FetchReachDense-v4_20251010_013104/models/best_model.zip
+env_id: FetchReach-v4
+buffer_dir: /home/wph52/weird/dynamics/datasets/fetch/transitions/fetch_reach_large
+env_kwargs: null
+num_episodes: 10000
+max_steps_per_episode: 5
+deterministic: false
+seed: null
+append: false
+
+
+val_ratio: 0.20

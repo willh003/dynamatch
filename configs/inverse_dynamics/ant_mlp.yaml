@@ -5,6 +5,5 @@ obs_dim: 107
 
 net_arch: [64, 64, 64]
 
-# Path to the trained action translator checkpoint
-checkpoint_path: null
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/transitions/ant_5m_large/ant_mlp_id_20251009_140802_inverse_dynamics.pth
 

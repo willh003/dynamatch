@@ -1,0 +1,5 @@
+_target_: stable_baselines3.PPO
+policy:
+  _target_: stable_baselines3.common.policies.MlpPolicy
+
+checkpoint_path: /home/wph52/weird/dynamics/rl/runs/AntModifiedPhysics-v1_20251010_130839/models/best_model.zip

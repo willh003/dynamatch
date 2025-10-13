@@ -14,100 +14,12 @@ from envs.register_envs import register_custom_envs
 from utils.data_utils import get_transition_path_from_dataset_config
 from tqdm import tqdm
 import zarr
+from envs.env_utils import get_state_from_obs
 
 import gymnasium as gym
 from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
 register_custom_envs()
-
-def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    
-    For InvertedPendulum-v5, the observation array typically contains:
-    [x,theta, x_dot, theta_dot] where:
-    - x: cart position
-    - x_dot: cart velocity  
-    - theta: pole angle
-    - theta_dot: pole velocity
-    
-    Args:
-        obs_array: Raw observation array from environment
-        obs_shape_meta: Shape metadata for observations
-        
-    Returns:
-        Dictionary with parsed observations
-    """
-    obs_dict = {}
-    
-    # For InvertedPendulum-v5, map the 4-element array to the expected keys
-    # Environment observation order: [cart_pos, pole_angle, cart_vel,  pole_vel]
-    if len(obs_array.shape) == 1 and obs_array.shape[0] == 4:
-        # Single observation - reorder to match set_state expectation
-        obs_dict["cart_position"] = np.array([obs_array[0]])  # cart_pos
-        obs_dict["pole_angle"] = np.array([obs_array[1]])     # pole_angle  
-        obs_dict["cart_velocity"] = np.array([obs_array[2]])  # cart_vel
-        obs_dict["pole_velocity"] = np.array([obs_array[3]])  # pole_vel
-    elif len(obs_array.shape) == 2 and obs_array.shape[1] == 4:
-        # Multiple observations (trajectory) - reorder to match set_state expectation
-        obs_dict["cart_position"] = obs_array[:, 0:1]  # cart_pos
-        obs_dict["pole_angle"] = obs_array[:, 1:2]     # pole_angle
-        obs_dict["cart_velocity"] = obs_array[:, 2:3]  # cart_vel
-        obs_dict["pole_velocity"] = obs_array[:, 3:4]  # pole_vel
-    
-    return obs_dict
-
-def parse_raw_observations_ant(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    
-    For Ant-v5, the observation array typically contains:
-    """
-    x_pos = np.array([d["x_position"] for d in info])[:,None]
-    y_pos = np.array([d["y_position"] for d in info])[:,None]
-
-    full_obs = np.concatenate([x_pos, y_pos,obs_array], axis=1)
-    obs_dict = {"full_obs": full_obs}
-    return obs_dict
-
-def parse_raw_observations(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    """
-    if "cart_position" in obs_shape_meta:
-        # TODO: better check for env type
-        return parse_raw_observations_pendulum(obs_array, obs_shape_meta)
-    else:
-        return parse_raw_observations_ant(obs_array, info, obs_shape_meta)
-
-
-def get_state_from_obs_pendulum(obs_array: np.ndarray) -> np.ndarray:
-    """
-    Get state from observation array for pendulum environment.
-    """
-    return obs_array
-
-def get_state_from_obs_ant(obs_array: np.ndarray, info:dict) -> np.ndarray:
-    """
-    Get state from observation array for ant environment.
-    """
-    x_pos = info['x_position']
-    y_pos = info['y_position']
-
-    full_obs = np.concatenate([[x_pos], [y_pos],obs_array], axis=0)
-    return full_obs
-
-def get_state_from_obs(obs_array: np.ndarray, info:dict, env_id: str) -> np.ndarray:
-    """
-    Get state from observation array for environment.
-    """
-    if "Pendulum" in env_id:
-        return get_state_from_obs_pendulum(obs_array)
-    elif "Ant" in env_id:
-        return get_state_from_obs_ant(obs_array, info)
-    else:
-        raise ValueError(f"Environment {env_id} not supported for state getting - implement get_state_from_obs for this environment")
-
 
 def make_env(env_id: str, env_kwargs: Dict[str, Any], seed: Optional[int] = None):
     """
@@ -123,6 +35,20 @@ def make_env(env_id: str, env_kwargs: Dict[str, Any], seed: Optional[int] = None
     return _init
 
 
+def get_state_from_vec_env(obs, infos, env_id: str) -> np.ndarray:
+    """
+    Get state from vectorized environment.
+    """
+    if type(obs) == dict:
+        return get_state_from_obs(obs, infos, env_id)
+    
+    n_envs = len(obs)
+    states = []
+    for env_idx in range(n_envs):
+        state = get_state_from_obs(obs[env_idx], infos[env_idx], env_id)
+        states.append(state)
+    return np.array(states)
+
 def collect_transitions_parallel(
     model_path: str,
     env_id: str,
@@ -131,6 +57,7 @@ def collect_transitions_parallel(
     max_steps_per_episode: int = 1000,
     deterministic: bool = False,
     seed: Optional[int] = None,
+    validate_physics_id: bool = False,
     n_envs: int = 4,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -167,6 +94,8 @@ def collect_transitions_parallel(
     
     # Initialize environments
     obs = vec_env.reset()
+    infos = vec_env.reset_infos
+
     episode_steps = [0] * n_envs
     episode_dones = [False] * n_envs
     
@@ -174,14 +103,17 @@ def collect_transitions_parallel(
     with tqdm(total=num_transitions, desc="Collecting transitions") as pbar:
         while len(all_states) < num_transitions:
             policy_actions, _ = model.predict(obs, deterministic=deterministic)
-            next_obs, rewards, dones, infos = vec_env.step(policy_actions)
+            next_obs, rewards, dones, next_infos = vec_env.step(policy_actions)
             
+            states = get_state_from_vec_env(obs, infos, env_id)
+            next_states = get_state_from_vec_env(next_obs, next_infos, env_id)
+
             for env_idx in range(n_envs):
 
                 if not dones[env_idx]:
                     
-                    state = get_state_from_obs(obs[env_idx], infos[env_idx], env_id)
-                    next_state = get_state_from_obs(next_obs[env_idx], infos[env_idx], env_id)
+                    state = states[env_idx]
+                    next_state = next_states[env_idx]
                     action = policy_actions[env_idx]
                     
                     all_states.append(state)
@@ -189,12 +121,17 @@ def collect_transitions_parallel(
                     all_actions.append(action)
                     all_rewards.append(rewards[env_idx])
                     
-                    error = get_physics_id_error(physics_env, state, next_state, action)
-                    all_gt_id_errors.append(error)
+                    if validate_physics_id:
+                        error = get_physics_id_error(physics_env, state, next_state, action)
+                        all_gt_id_errors.append(error)
+                    else:
+                        all_gt_id_errors.append(0.0)
+                        
                     
                     pbar.update(1)
 
             obs = next_obs
+            infos = next_infos
 
     vec_env.close()
 
@@ -302,8 +239,8 @@ def save_transitions_to_zarr(
 
 def create_output_path_from_config(config):
     """Create output path by replacing 'sequence' with 'transitions' in the buffer path."""
-    buffer_path = config['buffer_path']
-    output_path = buffer_path.replace('/sequence/', '/transitions/')
+    buffer_dir = config['buffer_dir']
+    output_path = buffer_dir.replace('/sequence/', '/transitions/')
     return output_path
 
 
@@ -354,7 +291,7 @@ def validate_dataset_saved_data(dataset_path, true_states,true_next_states, true
     print(f"Next state errors: {np.linalg.norm(next_state_errors)}")
     print(f"Action errors: {np.linalg.norm(action_errors)}")
 
-def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
+def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, validate_physics_id: bool = False) -> str:
     """
     Collect transition dataset by rolling out a policy in parallel and saving to zarr format.
     
@@ -377,7 +314,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
     deterministic = config.get('deterministic', False)
     seed = config.get('seed', None)
     append = config.get('append', False)
-    
+        
     # Create output path
     output_path = get_transition_path_from_dataset_config(config_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -394,6 +331,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
         deterministic=deterministic,
         seed=seed,
         n_envs=n_envs,
+        validate_physics_id=validate_physics_id,
     )
     
     # Save to zarr
@@ -417,7 +355,8 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4) -> st
     print(f"Mean reward: {np.mean(all_rewards):.3f}, Std reward: {np.std(all_rewards):.3f}, Max reward: {np.max(all_rewards):.3f}, Min reward: {np.min(all_rewards):.3f}")
 
     validate_dataset_saved_data(saved_path, states, next_states, actions)
-    validate_id_on_dataset(saved_path, env_id)
+    if validate_physics_id:
+        validate_id_on_dataset(saved_path, env_id)
     
     all_gt_id_errors = np.array(all_gt_id_errors)
     print(f"Mean Physics ID error: {np.mean(all_gt_id_errors):.3e}, Std Physics ID error: {np.std(all_gt_id_errors):.3e}, Max Physics ID error: {np.max(all_gt_id_errors):.3e}, Min Physics ID error: {np.min(all_gt_id_errors):.3e}")
@@ -466,6 +405,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Collect transition dataset by rolling out an RL policy in parallel.")
     parser.add_argument("--config", required=True, help="Path to dataset config YAML file")
     parser.add_argument("--n_envs", type=int, default=16, help="Number of parallel environments (default: 4)")
+    parser.add_argument("--validate_physics_id", type=bool, default=False, help="Whether to validate physics ID (default: False)")
     return parser.parse_args()
 
 
@@ -473,4 +413,4 @@ if __name__ == "__main__":
     args = parse_args()
     set_cluster_graphics_vars()
     
-    collect_transition_dataset_parallel(config_path=args.config, n_envs=args.n_envs)
+    collect_transition_dataset_parallel(config_path=args.config, n_envs=args.n_envs, validate_physics_id=args.validate_physics_id)

@@ -1,0 +1,9 @@
+_target_: stable_baselines3.PPO
+policy:
+  _target_: stable_baselines3.common.policies.MultiInputPolicy
+
+# Path to the trained base policy checkpoint
+checkpoint_path: /home/wph52/weird/dynamics/rl/runs/FetchReachModifiedPhysicsDense-v4_20251010_202636/models/best_model.zip
+
+
+

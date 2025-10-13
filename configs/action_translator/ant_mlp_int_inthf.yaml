@@ -1,0 +1,8 @@
+_target_: generative_policies.action_translation.MlpActionTranslator
+name: ant_mlp_int_inthf
+action_dim: 8
+obs_dim: 107
+net_arch: [32, 32]
+# Path to the trained action translator checkpoint
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_integrable_high_friction_physics/action_translator_model.pth
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_integrable_high_friction/translator_ant_mlp_20251009_190615.pth

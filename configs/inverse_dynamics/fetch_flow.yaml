@@ -1,0 +1,11 @@
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
+name: fetch_flow_id
+action_dim: 4 
+obs_dim: 13
+
+diffusion_step_embed_dim: 16
+down_dims: [16, 32, 64]
+num_inference_steps: 10
+
+checkpoint_path: null
+

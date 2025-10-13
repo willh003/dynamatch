@@ -24,7 +24,7 @@ import imageio.v2 as imageio
 from tqdm import tqdm
 from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config, print_model_info
 from omegaconf import OmegaConf
-from rl.collect_dataset import get_state_from_obs
+from envs.env_utils import get_state_from_obs
 
 def resolve_hydra_config_and_get_source_checkpoint(config_path, source_policy_checkpoint=None):
     """
@@ -39,17 +39,17 @@ def resolve_hydra_config_and_get_source_checkpoint(config_path, source_policy_ch
         
         # Load source policy config
         source_policy_name = config['defaults'][0]['source_policy']
-        source_policy_config_path = os.path.join(config_dir, '..', 'source_policy', f'{source_policy_name}.yaml')
-        source_policy_config_path = os.path.normpath(source_policy_config_path)
+        base_policy_config_path = os.path.join(config_dir, '..', 'source_policy', f'{source_policy_name}.yaml')
+        base_policy_config_path = os.path.normpath(base_policy_config_path)
         
-        with open(source_policy_config_path, 'r') as f:
-            source_policy_config = yaml.safe_load(f)
+        with open(base_policy_config_path, 'r') as f:
+            base_policy_config = yaml.safe_load(f)
         
         # Return checkpoint path (override if provided)
         if source_policy_checkpoint:
             return source_policy_checkpoint
         else:
-            return source_policy_config.get('checkpoint_path')
+            return base_policy_config.get('checkpoint_path')
             
     except Exception as e:
         print(f"Warning: Could not resolve Hydra config: {e}")
@@ -318,9 +318,286 @@ def evaluate_policy(
     return mean_reward, std_reward
 
 
+def plot_episode_rewards(all_episode_rewards, video_run_dir):
+    """
+    Create plots of reward over time for each episode.
+    
+    Args:
+        all_episode_rewards: List of lists, where each inner list contains rewards for one episode
+        video_run_dir: Directory to save plots
+    """
+    print("Plotting episode rewards...")
+    
+    # Create individual plots for each episode
+    for episode_idx, episode_rewards in enumerate(all_episode_rewards):
+        if len(episode_rewards) == 0:
+            continue
+            
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+        
+        # Plot reward over time
+        steps = np.arange(len(episode_rewards))
+        ax.plot(steps, episode_rewards, 'b-', linewidth=2, alpha=0.8)
+        ax.fill_between(steps, episode_rewards, alpha=0.3)
+        
+        # Add cumulative reward line
+        cumulative_rewards = np.cumsum(episode_rewards)
+        ax2 = ax.twinx()
+        ax2.plot(steps, cumulative_rewards, 'r--', linewidth=2, alpha=0.8, label='Cumulative Reward')
+        
+        # Formatting
+        ax.set_xlabel('Step')
+        ax.set_ylabel('Reward', color='b')
+        ax2.set_ylabel('Cumulative Reward', color='r')
+        ax.set_title(f'Episode {episode_idx + 1} - Reward Over Time\nTotal Reward: {cumulative_rewards[-1]:.2f}')
+        ax.grid(True, alpha=0.3)
+        
+        # Add legend for cumulative reward
+        ax2.legend(loc='upper right')
+        
+        # Save plot
+        plot_path = os.path.join(video_run_dir, f"reward_episode_{episode_idx}.png")
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    # Create a combined plot showing all episodes
+    if len(all_episode_rewards) > 1:
+        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # Plot 1: All episode rewards overlaid
+        ax1 = axes[0]
+        colors = plt.cm.get_cmap('tab10')(np.linspace(0, 1, len(all_episode_rewards)))
+        for episode_idx, (episode_rewards, color) in enumerate(zip(all_episode_rewards, colors)):
+            if len(episode_rewards) == 0:
+                continue
+            steps = np.arange(len(episode_rewards))
+            ax1.plot(steps, episode_rewards, color=color, linewidth=2, alpha=0.7, 
+                    label=f'Episode {episode_idx + 1}')
+        
+        ax1.set_xlabel('Step')
+        ax1.set_ylabel('Reward')
+        ax1.set_title('All Episodes - Reward Over Time')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Episode total rewards comparison
+        ax2 = axes[1]
+        episode_totals = [sum(rewards) for rewards in all_episode_rewards if len(rewards) > 0]
+        episode_indices = list(range(1, len(episode_totals) + 1))
+        
+        bars = ax2.bar(episode_indices, episode_totals, color=colors[:len(episode_totals)], alpha=0.7)
+        ax2.set_xlabel('Episode')
+        ax2.set_ylabel('Total Reward')
+        ax2.set_title('Episode Total Rewards Comparison')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, total in zip(bars, episode_totals):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                    f'{total:.2f}', ha='center', va='bottom')
+        
+        plt.tight_layout()
+        combined_plot_path = os.path.join(video_run_dir, "all_episodes_rewards.png")
+        plt.savefig(combined_plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Saved combined reward plot to: {combined_plot_path}")
+
+
+def plot_episode_trajectories(all_episode_positions, video_run_dir):
+    """
+    Create separate plots of x vs z trajectories for each episode and combined.
+    
+    Args:
+        all_episode_positions: List of lists, where each inner list contains (x, z) tuples for one episode
+        video_run_dir: Directory to save plots
+    """
+    print("Plotting episode trajectories...")
+    
+    # Create individual trajectory plots for each episode
+    for episode_idx, episode_positions in enumerate(all_episode_positions):
+        if len(episode_positions) == 0:
+            continue
+            
+        # Extract x and z coordinates
+        x_coords = [pos[0] for pos in episode_positions]
+        z_coords = [pos[1] for pos in episode_positions]
+        
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Plot X vs Z trajectory
+        ax.plot(x_coords, z_coords, 'g-', linewidth=3, alpha=0.8)
+        ax.scatter(x_coords[0], z_coords[0], color='green', s=150, marker='o', label='Start', zorder=5)
+        ax.scatter(x_coords[-1], z_coords[-1], color='red', s=150, marker='x', label='End', zorder=5)
+        ax.set_xlabel('X Position', fontsize=12)
+        ax.set_ylabel('Z Position', fontsize=12)
+        ax.set_title(f'Episode {episode_idx} - Trajectory (X vs Z)', fontsize=14)
+        ax.legend(fontsize=12)
+        ax.grid(True, alpha=0.3)
+        # Remove equal aspect ratio to prevent skinny plots when scales differ
+        
+        plt.tight_layout()
+        plot_path = os.path.join(video_run_dir, f"trajectory_episode_{episode_idx}.png")
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    # Create a combined trajectory plot showing all episodes
+    if len(all_episode_positions) > 1:
+        fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+        
+        colors = plt.cm.get_cmap('tab10')(np.linspace(0, 1, len(all_episode_positions)))
+        for episode_idx, (episode_positions, color) in enumerate(zip(all_episode_positions, colors)):
+            if len(episode_positions) == 0:
+                continue
+            x_coords = [pos[0] for pos in episode_positions]
+            z_coords = [pos[1] for pos in episode_positions]
+            ax.plot(x_coords, z_coords, color=color, linewidth=3, alpha=0.8, 
+                    label=f'Episode {episode_idx}')
+            # Mark start and end points
+            ax.scatter(x_coords[0], z_coords[0], color=color, s=100, marker='o', zorder=5)
+            ax.scatter(x_coords[-1], z_coords[-1], color=color, s=100, marker='x', zorder=5)
+        
+        ax.set_xlabel('X Position', fontsize=12)
+        ax.set_ylabel('Z Position', fontsize=12)
+        ax.set_title('All Episodes - Trajectories (X vs Z)', fontsize=14)
+        ax.legend(fontsize=12)
+        ax.grid(True, alpha=0.3)
+        # Remove equal aspect ratio to prevent skinny plots when scales differ
+        
+        plt.tight_layout()
+        combined_plot_path = os.path.join(video_run_dir, "all_episodes_trajectories.png")
+        plt.savefig(combined_plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Saved combined trajectory plot to: {combined_plot_path}")
+
+
+def plot_episode_positions(all_episode_positions, video_run_dir):
+    """
+    Create plots of x and z positions over time for each episode.
+    
+    Args:
+        all_episode_positions: List of lists, where each inner list contains (x, z) tuples for one episode
+        video_run_dir: Directory to save plots
+    """
+    print("Plotting episode positions...")
+    
+    # Create individual plots for each episode
+    for episode_idx, episode_positions in enumerate(all_episode_positions):
+        if len(episode_positions) == 0:
+            continue
+            
+        # Extract x and z coordinates
+        x_coords = [pos[0] for pos in episode_positions]
+        z_coords = [pos[1] for pos in episode_positions]
+        
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # Plot 1: X position over time
+        steps = np.arange(len(x_coords))
+        axes[0].plot(steps, x_coords, 'b-', linewidth=2, alpha=0.8)
+        axes[0].fill_between(steps, x_coords, alpha=0.3)
+        axes[0].set_xlabel('Step')
+        axes[0].set_ylabel('X Position')
+        axes[0].set_title(f'Episode {episode_idx} - X Position Over Time')
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot 2: Z position over time
+        axes[1].plot(steps, z_coords, 'r-', linewidth=2, alpha=0.8)
+        axes[1].fill_between(steps, z_coords, alpha=0.3, color='red')
+        axes[1].set_xlabel('Step')
+        axes[1].set_ylabel('Z Position')
+        axes[1].set_title(f'Episode {episode_idx} - Z Position Over Time')
+        axes[1].grid(True, alpha=0.3)
+        
+        # Plot 3: Distance from origin over time
+        distances = [np.sqrt(x**2 + z**2) for x, z in episode_positions]
+        axes[2].plot(steps, distances, 'purple', linewidth=2, alpha=0.8)
+        axes[2].fill_between(steps, distances, alpha=0.3, color='purple')
+        axes[2].set_xlabel('Step')
+        axes[2].set_ylabel('Distance from Origin')
+        axes[2].set_title(f'Episode {episode_idx} - Distance from Origin')
+        axes[2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plot_path = os.path.join(video_run_dir, f"position_episode_{episode_idx}.png")
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    # Create a combined plot showing all episodes
+    if len(all_episode_positions) > 1:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # Plot 1: All X positions overlaid
+        ax1 = axes[0]
+        colors = plt.cm.get_cmap('tab10')(np.linspace(0, 1, len(all_episode_positions)))
+        for episode_idx, (episode_positions, color) in enumerate(zip(all_episode_positions, colors)):
+            if len(episode_positions) == 0:
+                continue
+            x_coords = [pos[0] for pos in episode_positions]
+            steps = np.arange(len(x_coords))
+            ax1.plot(steps, x_coords, color=color, linewidth=2, alpha=0.7, 
+                    label=f'Episode {episode_idx}')
+        
+        ax1.set_xlabel('Step')
+        ax1.set_ylabel('X Position')
+        ax1.set_title('All Episodes - X Position Over Time')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: All Z positions overlaid
+        ax2 = axes[1]
+        for episode_idx, (episode_positions, color) in enumerate(zip(all_episode_positions, colors)):
+            if len(episode_positions) == 0:
+                continue
+            z_coords = [pos[1] for pos in episode_positions]
+            steps = np.arange(len(z_coords))
+            ax2.plot(steps, z_coords, color=color, linewidth=2, alpha=0.7, 
+                    label=f'Episode {episode_idx}')
+        
+        ax2.set_xlabel('Step')
+        ax2.set_ylabel('Z Position')
+        ax2.set_title('All Episodes - Z Position Over Time')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Final x-axis distances comparison
+        ax3 = axes[2]
+        final_x_distances = []
+        episode_indices = []
+        for episode_idx, episode_positions in enumerate(all_episode_positions):
+            if len(episode_positions) == 0:
+                continue
+            final_pos = episode_positions[-1]
+            final_x_distance = abs(final_pos[0])  # absolute x-axis distance
+            final_x_distances.append(final_x_distance)
+            episode_indices.append(episode_idx)
+        
+        bars = ax3.bar(episode_indices, final_x_distances, color=colors[:len(final_x_distances)], alpha=0.7)
+        ax3.set_xlabel('Episode')
+        ax3.set_ylabel('Final X-Axis Distance')
+        ax3.set_title('Final X-Axis Distance by Episode')
+        ax3.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, distance in zip(bars, final_x_distances):
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                    f'{distance:.2f}', ha='center', va='bottom')
+        
+        plt.tight_layout()
+        combined_plot_path = os.path.join(video_run_dir, "all_episodes_positions.png")
+        plt.savefig(combined_plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Saved combined position plot to: {combined_plot_path}")
+
+
 def evaluate_and_record(
     translator_policy_config_path: str = None,
-    source_policy_config_path: str = None,
+    base_policy_config_path: str = None,
     env_id: str = "InvertedPendulum-v5",
     source_policy_checkpoint: str = None,
     action_translator_checkpoint: str = None,
@@ -337,7 +614,7 @@ def evaluate_and_record(
     
     Args:
         translator_policy_config_path: Path to ActionTranslator config YAML file (for ActionTranslator models)
-        source_policy_config_path: Path to source policy config YAML file (for standalone source policies)
+        base_policy_config_path: Path to source policy config YAML file (for standalone source policies)
         source_policy_checkpoint: Path to source policy checkpoint (overrides config checkpoint)
         action_translator_checkpoint: Path to action translator checkpoint (overrides config for ActionTranslator)
         env_id: Gymnasium environment ID
@@ -350,16 +627,16 @@ def evaluate_and_record(
         config: Additional configuration dict
     """
     # Determine model type and validate arguments
-    model_types = [translator_policy_config_path, source_policy_config_path]
+    model_types = [translator_policy_config_path, base_policy_config_path]
     non_none_models = [m for m in model_types if m is not None]
     
     if len(non_none_models) > 1:
-        raise ValueError("Cannot specify multiple model types. Choose one: translator_policy_config_path or source_policy_config_path.")
+        raise ValueError("Cannot specify multiple model types. Choose one: translator_policy_config_path or base_policy_config_path.")
     elif len(non_none_models) == 0:
-        raise ValueError("Must specify one model type: translator_policy_config_path (for ActionTranslator) or source_policy_config_path (for standalone source policy).")
+        raise ValueError("Must specify one model type: translator_policy_config_path (for ActionTranslator) or base_policy_config_path (for standalone source policy).")
     
     is_action_translator = translator_policy_config_path is not None
-    is_source_policy = source_policy_config_path is not None
+    is_source_policy = base_policy_config_path is not None
     
     # Determine source policy checkpoint path for video directory
     source_checkpoint_path = None
@@ -370,7 +647,7 @@ def evaluate_and_record(
         )
     elif is_source_policy:
         # For source policy, load the config to get the checkpoint path
-        with open(source_policy_config_path, 'r') as f:
+        with open(base_policy_config_path, 'r') as f:
             config = yaml.safe_load(f)
         source_checkpoint_path = config.get('checkpoint_path')
         if source_policy_checkpoint:
@@ -424,7 +701,7 @@ def evaluate_and_record(
         print("Loading source policy from config...")
 
         model = load_source_policy_from_config(
-            source_policy_config_path,
+            base_policy_config_path,
             source_policy_checkpoint=source_policy_checkpoint
         )
         print("Model loaded successfully!")
@@ -456,10 +733,15 @@ def evaluate_and_record(
     all_mj_actuator = []
     all_mj_constraint = []
     all_mj_xmat = []
+    all_episode_rewards = []  # Track rewards per episode
+    all_episode_positions = []  # Track positions per episode (only for ant environments)
+    is_ant_env = "ant" in env_id.lower()
     
     for episode_idx in range(min(5, num_episodes)):
         obs, info = video_env.reset(seed=seed)
         episode_return = 0.0
+        episode_rewards = []  # Track rewards for this episode
+        episode_positions = [] if is_ant_env else None  # Track positions for this episode (only for ant environments)
         for step in range(max_steps_per_episode):
             if is_action_translator:
                 # ActionTranslator returns (action, state) tuple
@@ -493,14 +775,37 @@ def evaluate_and_record(
             all_mj_xmat.append(video_env.unwrapped.data.xmat.copy())
 
             episode_return += float(reward)
+            episode_rewards.append(float(reward))  # Track reward for this step
+            
+            # Track positions from info dictionary and observation (only for ant environments)
+            if is_ant_env and episode_positions is not None:
+                x_pos = info.get('x_position', 0.0)
+                z_pos = obs[0] if len(obs) > 0 else 0.0  # z coordinate from first observation
+                episode_positions.append((x_pos, z_pos))
+            
             if terminated or truncated:
                 break
-        print(f"Episode {episode_idx + 1}/{min(5, num_episodes)} return: {episode_return:.2f}")
+        # Calculate final x position displacement for ant environments
+        final_x_displacement = 0.0
+        if is_ant_env and episode_positions is not None and len(episode_positions) > 0:
+            final_x_displacement = episode_positions[-1][0]  # x coordinate of final position
+            all_episode_positions.append(episode_positions)  # Store positions for this episode
+        
+        print(f"Episode {episode_idx + 1}/{min(5, num_episodes)} return: {episode_return:.2f}, final x displacement: {final_x_displacement:.2f}")
         all_returns.append(episode_return)
+        all_episode_rewards.append(episode_rewards)  # Store rewards for this episode
 
     # Plot results
     all_actions = np.array(all_actions)
     all_returns = np.array(all_returns)
+    
+    # Plot episode rewards
+    plot_episode_rewards(all_episode_rewards, video_run_dir)
+    
+    # Plot episode positions (only for ant environments)
+    if is_ant_env and len(all_episode_positions) > 0:
+        plot_episode_positions(all_episode_positions, video_run_dir)
+        plot_episode_trajectories(all_episode_positions, video_run_dir)
 
     if len(all_mj_actuator) > 0 and "Ant" in env_id:
         mj_model = video_env.unwrapped.model
@@ -554,14 +859,14 @@ def parse_args():
     
     # Model selection (mutually exclusive)
     model_group = parser.add_mutually_exclusive_group(required=True)
-    model_group.add_argument("--source_policy_config", help="Path to the source policy config YAML file")
+    model_group.add_argument("--base_policy_config", help="Path to the source policy config YAML file")
     model_group.add_argument("--translator_policy_config", help="Path to the ActionTranslator config YAML file")
     
     # Environment arguments
     parser.add_argument("--env_id", default="InvertedPendulum-v5", help="Gymnasium env id")
     parser.add_argument("--episodes", type=int, default=32, help="Number of episodes to eval (max 5 video recorded)")
     parser.add_argument("--max_steps", type=int, default=1000, help="Max steps per episode")
-    parser.add_argument("--deterministic", action="store_true", default=True, help="Use deterministic actions instead of stochastic")
+    parser.add_argument("--stochastic", action="store_true", default=False, help="Use stochastic actions instead of stochastic")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     
     # ActionTranslator specific arguments
@@ -578,12 +883,12 @@ if __name__ == "__main__":
 
     evaluate_and_record(
         translator_policy_config_path=args.translator_policy_config,
-        source_policy_config_path=args.source_policy_config,
+        base_policy_config_path=args.base_policy_config,
         source_policy_checkpoint=args.source_policy_checkpoint,
         action_translator_checkpoint=args.action_translator_checkpoint,
         env_id=args.env_id,
         num_episodes=args.episodes,
         max_steps_per_episode=args.max_steps,
-        deterministic=args.deterministic,
+        deterministic=not args.stochastic,
         seed=args.seed,
     )

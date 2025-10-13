@@ -69,7 +69,6 @@ def build_action_translator_from_config(cfg_dict, obs_dim=None, action_dim=None,
     Returns:
         nn.Module implementing ActionTranslatorInterface
     """
-
     # Pull out checkpoint path so it doesn't interfere with instantiation
     checkpoint_path = cfg_dict.pop('checkpoint_path', None)
 

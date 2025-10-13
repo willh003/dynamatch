@@ -6,13 +6,13 @@ from typing import Dict, List, Any, Optional, Union
 import numpy as np
 import gymnasium as gym
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecEnv
 from cluster_utils import set_cluster_graphics_vars
 import sys
 import matplotlib.pyplot as plt
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
-from envs.env_utils import modify_env_integrator
+from envs.env_utils import modify_env_integrator, get_state_from_obs, parse_raw_observations
+from inverse.physics_inverse_dynamics import gym_inverse_dynamics, compare_fwd_inv, get_ctrl_from_applied_force, inverse_acceleration_integration
 from tqdm import tqdm
 import copy
 import mujoco
@@ -34,83 +34,7 @@ def flatten_actions_list(actions_list: List[np.ndarray]) -> np.ndarray:
         flattened.extend(actions.flatten())
     return np.array(flattened, dtype=np.float32)
 
-
-def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    
-    For InvertedPendulum-v5, the observation array typically contains:
-    [x,theta, x_dot, theta_dot] where:
-    - x: cart position
-    - x_dot: cart velocity  
-    - theta: pole angle
-    - theta_dot: pole velocity
-    
-    Args:
-        obs_array: Raw observation array from environment
-        obs_shape_meta: Shape metadata for observations
-        
-    Returns:
-        Dictionary with parsed observations
-    """
-    obs_dict = {}
-    
-    # For InvertedPendulum-v5, map the 4-element array to the expected keys
-    # Environment observation order: [cart_pos, pole_angle, cart_vel,  pole_vel]
-    if len(obs_array.shape) == 1 and obs_array.shape[0] == 4:
-        # Single observation - reorder to match set_state expectation
-        obs_dict["cart_position"] = np.array([obs_array[0]])  # cart_pos
-        obs_dict["pole_angle"] = np.array([obs_array[1]])     # pole_angle  
-        obs_dict["cart_velocity"] = np.array([obs_array[2]])  # cart_vel
-        obs_dict["pole_velocity"] = np.array([obs_array[3]])  # pole_vel
-    elif len(obs_array.shape) == 2 and obs_array.shape[1] == 4:
-        # Multiple observations (trajectory) - reorder to match set_state expectation
-        obs_dict["cart_position"] = obs_array[:, 0:1]  # cart_pos
-        obs_dict["pole_angle"] = obs_array[:, 1:2]     # pole_angle
-        obs_dict["cart_velocity"] = obs_array[:, 2:3]  # cart_vel
-        obs_dict["pole_velocity"] = obs_array[:, 3:4]  # pole_vel
-    
-    return obs_dict
-
-def parse_raw_observations_ant(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    
-    For Ant-v5, the observation array typically contains:
-    """
-    x_pos = np.array([d["x_position"] for d in info])[:,None]
-    y_pos = np.array([d["y_position"] for d in info])[:,None]
-
-    full_obs = np.concatenate([x_pos, y_pos,obs_array], axis=1)
-    obs_dict = {"full_obs": full_obs}
-    return obs_dict
-
-def parse_raw_observations(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """
-    Parse raw observation array into dictionary format expected by the dataset.
-    """
-    if "cart_position" in obs_shape_meta:
-        # TODO: better check for env type
-        return parse_raw_observations_pendulum(obs_array, obs_shape_meta)
-    else:
-        return parse_raw_observations_ant(obs_array, info, obs_shape_meta)
-
-
-def make_env(env_id: str, env_kwargs: Dict[str, Any], seed: Optional[int] = None):
-    """
-    Create a single environment for vectorized environment.
-    """
-    def _init():
-        # Register custom environments in each subprocess
-        register_custom_envs()
-        env = gym.make(env_id, **env_kwargs)
-        if seed is not None:
-            env.reset(seed=seed)
-        return env
-    return _init
-
-
-def rollout_policy_parallel(
+def rollout_policy(
     model_path: str,
     env_id: str,
     env_kwargs: Dict[str, Any] = None,
@@ -118,10 +42,9 @@ def rollout_policy_parallel(
     max_steps_per_episode: int = 1000,
     deterministic: bool = False,
     seed: Optional[int] = None,
-    n_envs: int = 4,
 ) -> tuple[List[Dict[str, np.ndarray]], List[np.ndarray]]:
     """
-    Rollout a policy in parallel using vectorized environments and collect trajectories.
+    Rollout a policy in the given environment and collect trajectories.
     
     Args:
         model_path: Path to the trained model .zip file
@@ -131,7 +54,6 @@ def rollout_policy_parallel(
         max_steps_per_episode: Maximum steps per episode
         deterministic: Whether to use deterministic actions
         seed: Random seed for environment resets
-        n_envs: Number of parallel environments
         
     Returns:
         Tuple of (observations_list, actions_list) where each list contains
@@ -143,69 +65,75 @@ def rollout_policy_parallel(
     # Load the trained model
     model = PPO.load(model_path)
     
-    # Create vectorized environment
-    vec_env = SubprocVecEnv([make_env(env_id, env_kwargs, seed) for _ in range(n_envs)])
+    # Create environment
+    env = gym.make(env_id, **env_kwargs)
+
     
     observations_list = []
     actions_list = []
     infos_list = []
+    id_actions_list = []
+
+    id_env = gym.make(env_id, **env_kwargs)
+    id_env.reset()
+
     all_rewards = []
     
-    # Initialize environments
-    obs = vec_env.reset()
-    episode_obs = [[] for _ in range(n_envs)]
-    episode_actions = [[] for _ in range(n_envs)]
-    episode_infos = [[] for _ in range(n_envs)]
-    episode_rewards = [[] for _ in range(n_envs)]
-    episode_dones = [False] * n_envs
-    episode_count = 0
-    
-    # Collect episodes in parallel
-    with tqdm(total=num_episodes, desc="Collecting episodes") as pbar:
-        while episode_count < num_episodes:
-            # Get actions from policy
-            actions, _ = model.predict(obs, deterministic=deterministic)
+    for episode in tqdm(range(num_episodes)):
+        obs, info = env.reset(seed=seed)
+        episode_obs = []
+        episode_actions = []
+        episode_id_actions = []
+        episode_infos = []
+        
+        for step in range(max_steps_per_episode):
+            episode_obs.append(obs)
+            episode_infos.append(info)
+            action, _ = model.predict(obs, deterministic=deterministic)
+            episode_actions.append(action)   
+
+            # this captures error inherent to mujoco forward/inverse, using the ground truth acceleration
+
+            fwd_inv_stats = compare_fwd_inv(action, copy.deepcopy(env.unwrapped.model), copy.deepcopy(env.unwrapped.data))
             
-            # Step all environments
-            next_obs, rewards, dones, infos = vec_env.step(actions)
+            next_obs, reward, terminated, truncated, next_info = env.step(action)
+
+            all_rewards.append(reward)
+            if terminated or truncated:
+                print(f"Episode {episode} terminated or truncated or done")
+                break
             
-            # Store data for each environment
-            for env_idx in range(n_envs):
-                if not episode_dones[env_idx]:
-                    episode_obs[env_idx].append(obs[env_idx])
-                    episode_actions[env_idx].append(actions[env_idx])
-                    episode_infos[env_idx].append(infos[env_idx])
-                    episode_rewards[env_idx].append(rewards[env_idx])
-                    
-                    if dones[env_idx]:
-                        # Episode finished for this environment
-                        episode_dones[env_idx] = True
-                        episode_count += 1
-                        
-                        # Convert to numpy arrays and store
-                        if len(episode_obs[env_idx]) > 0:
-                            episode_obs_array = np.array(episode_obs[env_idx], dtype=np.float32)
-                            episode_actions_array = np.array(episode_actions[env_idx], dtype=np.float32)
-                            
-                            observations_list.append(episode_obs_array)
-                            actions_list.append(episode_actions_array)
-                            infos_list.append(episode_infos[env_idx])
-                            all_rewards.extend(episode_rewards[env_idx])
-                            
-                            # Reset for next episode
-                            episode_obs[env_idx] = []
-                            episode_actions[env_idx] = []
-                            episode_infos[env_idx] = []
-                            episode_rewards[env_idx] = []
-                            episode_dones[env_idx] = False
-                        
-                        pbar.update(1)
-            
-            # Update observation for next step
+            # compute ID using an estimate of the acceleration (qvel finite difference)
+            state = np.copy(get_state_from_obs(obs, info, env_id))
+            next_state = np.copy(get_state_from_obs(next_obs, next_info, env_id))
+            id_action = gym_inverse_dynamics(id_env, state, next_state)
+            episode_id_actions.append(id_action)
+            action_error = action - id_action
+
+            print(f"Action: {fwd_inv_stats["ctrl"]}")
+            print(f"Fwdinv action: {fwd_inv_stats["ctrl_inv"]}")
+            print(f"Full gym ID action: {id_action}")
+            print(f"Error from fwdinv (no accel integration): {fwd_inv_stats["ctrl_error"]}")
+            print(f"Error from full gym ID: {np.linalg.norm(action_error)}")
+            print(f"MAPE from fwdinv (no accel integration): {np.mean(np.abs((action - fwd_inv_stats["ctrl_inv"]) / action))*100:.3f}%")
+            print(f"MAPE from full gym ID: {np.mean(np.abs(action_error / action))*100:.3f}%")
+            print("-"*20)
+
             obs = next_obs
-    
-    vec_env.close()
-    return observations_list, infos_list, actions_list, all_rewards
+            info = next_info
+
+        # Convert to numpy arrays
+        episode_obs = np.array(episode_obs, dtype=np.float32)
+        episode_actions = np.array(episode_actions, dtype=np.float32)
+        episode_id_actions = np.array(episode_id_actions, dtype=np.float32)
+
+        observations_list.append(episode_obs)
+        actions_list.append(episode_actions)
+        infos_list.append(episode_infos)
+        id_actions_list.append(episode_id_actions)
+
+    env.close()
+    return observations_list, infos_list, actions_list, id_actions_list, all_rewards
 
 
 def save_trajectories_to_zarr(
@@ -336,13 +264,12 @@ def save_trajectories_to_zarr(
     return output_path
 
 
-def collect_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
+def collect_dataset(config_path: str) -> str:
     """
-    Collect dataset by rolling out a policy in parallel and saving to zarr format.
+    Collect dataset by rolling out a policy and saving to zarr format.
     
     Args:
         config_path: Path to the dataset config YAML file
-        n_envs: Number of parallel environments
         
     Returns:
         Path to the saved zarr file
@@ -361,10 +288,10 @@ def collect_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
     seed = config.get('seed', None)
     append = config.get('append', False)
     
-    # Rollout policy in parallel
-    print(f"Rolling out policy for {num_episodes} episodes using {n_envs} parallel environments...")
+    # Rollout policy
+    print(f"Rolling out policy for {num_episodes} episodes...")
 
-    observations_list, infos_list, actions_list, all_rewards = rollout_policy_parallel(
+    observations_list, infos_list, actions_list, id_actions_list, all_rewards = rollout_policy(
         model_path=model_path,
         env_id=env_id,
         env_kwargs=env_kwargs,
@@ -372,11 +299,10 @@ def collect_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
         max_steps_per_episode=max_steps_per_episode,
         deterministic=deterministic,
         seed=seed,
-        n_envs=n_envs,
     )
     
     # Save to zarr
-    output_path = config['buffer_path']
+    output_path = config['buffer_dir']
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     print(f"Saving trajectories to {output_path}...")
     saved_path = save_trajectories_to_zarr(
@@ -391,15 +317,26 @@ def collect_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
     print(f"Mean reward: {np.mean(all_rewards):.3f}, Std reward: {np.std(all_rewards):.3f}, Max reward: {np.max(all_rewards):.3f}, Min reward: {np.min(all_rewards):.3f}")
     print(f"Dataset collection complete! Saved to: {saved_path}")
 
-    # Create plots
+
     plot_path = os.path.join(os.path.dirname(output_path),'dataset_plots')
     os.makedirs(plot_path, exist_ok=True)
     all_actions = flatten_actions_list(actions_list)
-    
+    all_id_actions = flatten_actions_list(id_actions_list)
+    plt.title(f"Actions distribution: ID vs Expert ({len(all_actions)} samples)")
     plt.hist(all_actions, label="actions", color="blue", alpha=0.5)
+    plt.hist(all_id_actions, label="id actions", color="orange", alpha=0.5)
     plt.legend()
-    plt.title(f"Actions distribution ({len(all_actions)} samples)")
     plt.savefig(os.path.join(plot_path, "collected_actions_dist.png"))
+    plt.clf()
+
+    length = min(len(all_actions), len(all_id_actions))
+    error=all_actions[:length] - all_id_actions[:length]
+    plt.hist(error, label="error", color="green", alpha=0.5)
+    std = np.std(error)
+    mean = np.mean(error)
+    plt.legend()
+    plt.title(f"Error of ID and Expert (N={length}), mse: {np.mean(error**2):.3f}, var: {np.var(error):.3f}")
+    plt.savefig(os.path.join(plot_path, "collected_actions_error_dist.png"))
     plt.clf()
 
     plt.hist(all_rewards, label="rewards", color="red", alpha=0.5)
@@ -428,14 +365,14 @@ def collect_dataset_parallel(config_path: str, n_envs: int = 4) -> str:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Collect dataset by rolling out an RL policy in parallel.")
+    parser = argparse.ArgumentParser(description="Collect dataset by rolling out an RL policy.")
     parser.add_argument("--config", required=True, help="Path to dataset config YAML file")
-    parser.add_argument("--n_envs", type=int, default=4, help="Number of parallel environments (default: 4)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     set_cluster_graphics_vars()
+    register_custom_envs()
     
-    collect_dataset_parallel(config_path=args.config, n_envs=args.n_envs)
+    collect_dataset(config_path=args.config)

@@ -1,11 +1,10 @@
-_target_: datasets.trajectory_dataset.make_trajectory_dataset
-name: pendulum
+_target_: null
+name: ant_original_high_friction
 
 # Dataset collection parameters
-model_path: /home/wph52/weird/dynamics/rl/runs/CustomAntHighFriction-v1_20250930_025344/models/best_model.zip
-env_id: AntIntegrableHighFriction-v1
-source_env_id: AntIntegrable-v1
-buffer_path: /home/wph52/weird/dynamics/datasets/ant/sequence/ant_high_friction/buffer.zarr
+model_path: /home/wph52/weird/dynamics/rl/runs/AntHighFriction-v1_20251009_191821/models/best_model.zip
+env_id: AntHighFriction-v1
+buffer_dir: /home/wph52/weird/dynamics/datasets/ant/sequence/ant_original_high_friction
 env_kwargs: null
 num_episodes: 10
 max_steps_per_episode: 1000

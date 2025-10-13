@@ -1,5 +1,6 @@
 defaults:
-  - source_policy: ant_ppo_5M
-  - action_translator: ant_flow
+  - source_policy: ant_ppo_1M
+  - action_translator: ant_flow_og_modphs
+#  - action_translator: ant_flow_int_inthf
 
 _target_: generative_policies.action_translation.ActionTranslatorPolicy

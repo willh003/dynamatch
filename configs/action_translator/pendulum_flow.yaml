@@ -8,7 +8,7 @@ down_dims: [32, 64]
 num_inference_steps: 10
 
 # Path to the trained action translator checkpoint
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/pendulum_flow_20251008_053911_translator.pth
-
+#checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/pendulum_flow_20251008_053911_translator.pth
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_integrable_dynamics_shift/pendulum_flow_20251009_145728_translator.pth
 
 

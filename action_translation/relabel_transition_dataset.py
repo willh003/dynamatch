@@ -5,6 +5,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 import zarr
+import matplotlib.pyplot as plt
+import seaborn as sns
 from typing import Optional
 from collections import OrderedDict
 from tqdm import tqdm
@@ -18,7 +20,6 @@ from utils.data_utils import load_transition_dataset, get_transition_path_from_d
 from torch.utils.data import TensorDataset
 
 def get_original_actions(train_set, 
-                        state_keys, 
                         inverse_dynamics_model: Optional[InverseDynamicsInterface] = None, 
                         physics_inverse_dynamics_model: Optional[InverseDynamicsInterface] = None, max_samples=None):
     """
@@ -33,7 +34,6 @@ def get_original_actions(train_set,
         max_samples: Maximum number of samples to process
     """
     print("=== Computing Original Actions with Inverse Dynamics ===")
-    print(f"State keys: {list(state_keys)}")
     
     if max_samples is None:
         max_samples = len(train_set)
@@ -96,9 +96,9 @@ def get_original_actions(train_set,
             print(f"Warning: Inverse dynamics failed for sample {i}: {e}")
             continue
 
-    error = np.array(original_actions) - np.array(physics_original_actions)
-
-    print(f"Mean Diff from physics ID: {np.mean(error)}, Std Diff from physics ID: {np.std(error)}, Max Diff from physics ID: {np.max(error)}, Min Diff from physics ID: {np.min(error)}")
+    if validate_physics:
+        error = np.array(original_actions) - np.array(physics_original_actions)
+        print(f"Mean Diff from physics ID: {np.mean(error)}, Std Diff from physics ID: {np.std(error)}, Max Diff from physics ID: {np.max(error)}, Min Diff from physics ID: {np.min(error)}")
 
     return np.array(states), np.array(original_actions), np.array(shifted_actions), np.array(next_states)
 
@@ -138,15 +138,122 @@ def create_action_translation_dataset(states, original_actions, shifted_actions,
     return output_path
 
 
+def plot_action_distributions(original_actions, shifted_actions, output_path):
+    """
+    Plot distributions of original_actions and shifted_actions for each action dimension.
+    
+    Args:
+        original_actions: Array of original actions (n_samples, action_dim)
+        shifted_actions: Array of shifted actions (n_samples, action_dim)
+        output_path: Path where the plot should be saved
+    """
+    print("=== Plotting Action Distributions ===")
+    
+    # Set up the plotting style
+    plt.style.use('default')
+    sns.set_palette("husl")
+    
+    action_dim = original_actions.shape[1]
+    
+    # Create subplots - 2 columns for original and shifted, rows for each action dimension
+    fig, axes = plt.subplots(action_dim, 2, figsize=(12, 3 * action_dim))
+    
+    # If only one action dimension, ensure axes is 2D
+    if action_dim == 1:
+        axes = axes.reshape(1, -1)
+    
+    for dim in range(action_dim):
+        # Plot original actions
+        axes[dim, 0].hist(original_actions[:, dim], bins=50, alpha=0.7, density=True, 
+                         label='Original Actions', color='blue')
+        axes[dim, 0].set_title(f'Original Actions - Dimension {dim}')
+        axes[dim, 0].set_xlabel('Action Value')
+        axes[dim, 0].set_ylabel('Density')
+        axes[dim, 0].grid(True, alpha=0.3)
+        axes[dim, 0].legend()
+        
+        # Plot shifted actions
+        axes[dim, 1].hist(shifted_actions[:, dim], bins=50, alpha=0.7, density=True, 
+                         label='Shifted Actions', color='red')
+        axes[dim, 1].set_title(f'Shifted Actions - Dimension {dim}')
+        axes[dim, 1].set_xlabel('Action Value')
+        axes[dim, 1].set_ylabel('Density')
+        axes[dim, 1].grid(True, alpha=0.3)
+        axes[dim, 1].legend()
+        
+        # Add statistics as text
+        orig_mean = np.mean(original_actions[:, dim])
+        orig_std = np.std(original_actions[:, dim])
+        shift_mean = np.mean(shifted_actions[:, dim])
+        shift_std = np.std(shifted_actions[:, dim])
+        
+        axes[dim, 0].text(0.02, 0.98, f'Mean: {orig_mean:.3f}\nStd: {orig_std:.3f}', 
+                         transform=axes[dim, 0].transAxes, verticalalignment='top',
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[dim, 1].text(0.02, 0.98, f'Mean: {shift_mean:.3f}\nStd: {shift_std:.3f}', 
+                         transform=axes[dim, 1].transAxes, verticalalignment='top',
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    
+    # Create output directory if it doesn't exist
+    plot_dir = os.path.dirname(output_path)
+    os.makedirs(plot_dir, exist_ok=True)
+    
+    # Save the plot
+    plot_path = os.path.join(plot_dir, 'action_distributions.png')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"Action distributions plot saved to: {plot_path}")
+    
+    # Also create a comparison plot showing both distributions on the same axes
+    fig2, axes2 = plt.subplots(action_dim, 1, figsize=(8, 3 * action_dim))
+    if action_dim == 1:
+        axes2 = [axes2]
+    
+    for dim in range(action_dim):
+        axes2[dim].hist(original_actions[:, dim], bins=50, alpha=0.6, density=True, 
+                       label='Original Actions', color='blue')
+        axes2[dim].hist(shifted_actions[:, dim], bins=50, alpha=0.6, density=True, 
+                       label='Shifted Actions', color='red')
+        axes2[dim].set_title(f'Action Distributions Comparison - Dimension {dim}')
+        axes2[dim].set_xlabel('Action Value')
+        axes2[dim].set_ylabel('Density')
+        axes2[dim].grid(True, alpha=0.3)
+        axes2[dim].legend()
+        
+        # Add statistics
+        orig_mean = np.mean(original_actions[:, dim])
+        orig_std = np.std(original_actions[:, dim])
+        shift_mean = np.mean(shifted_actions[:, dim])
+        shift_std = np.std(shifted_actions[:, dim])
+        
+        axes2[dim].text(0.02, 0.98, 
+                       f'Original: μ={orig_mean:.3f}, σ={orig_std:.3f}\n'
+                       f'Shifted: μ={shift_mean:.3f}, σ={shift_std:.3f}', 
+                       transform=axes2[dim].transAxes, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    
+    # Save the comparison plot
+    comparison_plot_path = os.path.join(plot_dir, 'action_distributions_comparison.png')
+    plt.savefig(comparison_plot_path, dpi=300, bbox_inches='tight')
+    print(f"Action distributions comparison plot saved to: {comparison_plot_path}")
+    
+    plt.close('all')  # Close all figures to free memory
+
 
 def main():
     parser = argparse.ArgumentParser(description='Relabel actions in transition dataset with inverse dynamics model')
     parser.add_argument('--model_config', type=str, default=None,
                        help='Path to inverse dynamics model config YAML file (if None, uses physics-based inverse dynamics)')
     parser.add_argument('--dataset_config', type=str, required=True,
-                       help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')    
+                       help='Path to dataset config YAML file (e.g., pendulum_integrable_dynamics_shift.yaml)')
+    parser.add_argument('--validate_physics_id', type=bool, default=False, help="Whether to validate physics ID (default: False)")
     parser.add_argument('--max_samples', type=int, default=None,
                        help='Maximum number of samples to process')
+    parser.add_argument('--inverse_dynamics_env_id', type=str, default=None,
+                       help='Environment ID for inverse dynamics model, only matters if validate_physics_id is True')
     args = parser.parse_args()
 
     register_custom_envs()
@@ -156,7 +263,6 @@ def main():
     dataset_config_path = args.dataset_config
     dataset_config = load_yaml_config(dataset_config_path)
     dataset_path = get_transition_path_from_dataset_config(dataset_config_path)
-    state_keys = OrderedDict(dataset_config['shape_meta']['obs']).keys()
     
     
     # Create output path
@@ -168,9 +274,12 @@ def main():
     if args.model_config is not None:        
         inverse_dynamics_model = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=True)
 
-    inverse_dynamics_env_id = dataset_config['source_env_id']
-    inverse_dynamics_env = gym.make(inverse_dynamics_env_id)
-    physics_inverse_dynamics_model = PhysicsInverseDynamicsModel(inverse_dynamics_env)
+    if args.validate_physics_id:
+        inverse_dynamics_env_id = args.inverse_dynamics_env_id
+        inverse_dynamics_env = gym.make(inverse_dynamics_env_id)
+        physics_inverse_dynamics_model = PhysicsInverseDynamicsModel(inverse_dynamics_env)
+    else:
+        physics_inverse_dynamics_model = None
     
     # Load transition dataset
     states, actions, next_states = load_transition_dataset(dataset_path)
@@ -184,8 +293,11 @@ def main():
 
     # Get original actions using inverse dynamics
     states, original_actions, shifted_actions, next_states = get_original_actions(
-        train_set, state_keys, inverse_dynamics_model, physics_inverse_dynamics_model, args.max_samples
+        train_set, inverse_dynamics_model, physics_inverse_dynamics_model, args.max_samples
     )
+    
+    # Plot action distributions
+    plot_action_distributions(original_actions, shifted_actions, output_path)
     
     # Create and save action translation dataset
     create_action_translation_dataset(states, original_actions, shifted_actions, next_states, output_path)
