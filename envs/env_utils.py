@@ -2,26 +2,160 @@ import gymnasium as gym
 import numpy as np
 import mujoco
 from typing import Dict, Any
+from robosuite.wrappers import Wrapper, GymWrapper
+import logging
+import os
+import imageio
+
+from stable_baselines3.common.env_util import make_vec_env as make_vec_env_sb3
+from stable_baselines3.common.callbacks import BaseCallback
 
 
-def make_env(env_id: str, **kwargs):
-    if "Robosuite" in env_id:   
+def make_vec_env(env_id: str, n_envs: int, **kwargs):
+    """
+    Make a vectorized environment for gym or robosuite
+    """
+    env_make_fn = lambda: make_env(env_id, **kwargs)
+    return make_vec_env_sb3(env_make_fn, n_envs)
+
+def make_env(env_id: str, render_mode: str = None, eval_mode: bool = False, **kwargs):
+    """
+    For robosuite, we expect format: Robosuite-<env_id>-<robot>
+    Only uses render_mode for gym environments. Otherwise, uses RobosuiteImageWrapper to get images
+    """
+    if "Robosuite" in env_id:    
         import robosuite as suite
-        suite_id = env_id.split("Robosuite")[-1]
-        env = suite.make(suite_id, **kwargs)
+        
+        logging.getLogger("robosuite").setLevel(logging.WARNING)
+        
+        suite_id = env_id.split("-")[-2]
+        robots = env_id.split("-")[-1]
+        env = suite.make(env_name = suite_id, robots=robots,    
+                        has_renderer=False,
+                        has_offscreen_renderer=eval_mode,
+                        use_camera_obs=False,
+                        camera_names="frontview",
+                        reward_shaping=kwargs.get('reward_shaping', True),
+                        **kwargs)
+
+        env = GymWrapper(env, flatten_obs=False)
+        env = RobosuiteImageWrapper(env)
     else:
-        env = gym.make(env_id, **kwargs)
+        render_mode = "rgb_array" if eval_mode else None
+        env = gym.make(env_id, render_mode=render_mode, **kwargs)
 
     return env
 
+class RobosuiteImageWrapper(Wrapper, gym.Env):
+    """
+    Renders using mj render function instead of the env render function (which is broken for robosuite)
+    """
+    def __init__(self, env: GymWrapper, render_width: int = 224, render_height: int = 224):
+        super().__init__(env)
+        render_cam = self.env.camera_names[0]
+        self.render_cam = render_cam
+        self.render_width = render_width
+        self.render_height = render_height
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        # Forward Gymnasium-compatible reset signature
+        return self.env.reset(seed=seed, options=options)
+
+    def step(self, action):
+        return self.env.step(action)
+
+    def render(self):
+        # Ensure renderer returns a contiguous uint8 RGB array
+        frame = self.env.sim.render(width = self.render_width, height = self.render_height, camera_name = self.render_cam)
+
+        return frame
+
+class VideoCallback(BaseCallback):
+    """
+    Callback for recording videos of agent episodes.
+
+    :param eval_env: The environment used for video recording
+    :param video_folder: Path to the folder where videos will be saved
+    :param eval_freq: Record video every ``eval_freq`` call of the callback
+    :param name_prefix: Common prefix to the saved videos
+    :param verbose: Verbosity level: 0 for no output, 1 for indicating when recording video
+    """
+
+    def __init__(
+        self,
+        eval_env: gym.Env,
+        video_folder: str,
+        eval_freq: int = 10000,
+        name_prefix: str = "evaluation",
+        verbose: int = 0,
+        deterministic: bool = True,
+        flip_vertical: bool = False,
+    ):
+        super().__init__(verbose=verbose)
+        self.eval_env = eval_env
+        self.video_folder = video_folder
+        self.eval_freq = eval_freq
+        self.name_prefix = name_prefix
+        self.episode_count = 0
+        self.deterministic = deterministic
+        self.flip_vertical = flip_vertical
+    def _init_callback(self) -> None:
+        # Create folder if needed
+        if self.video_folder is not None:
+            os.makedirs(self.video_folder, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            self._record_video()
+        return True
+
+    def _record_video(self) -> None:
+        """Record a single episode and save it as a video."""
+        if self.verbose >= 1:
+            print(f"Recording video episode {self.episode_count}...")
+        
+        # Reset environment
+        obs, _ = self.eval_env.reset()
+        frames = []
+        done = False
+        
+        # Record episode
+        while not done:
+            # Get action from model
+            action, _ = self.model.predict(obs, deterministic=self.deterministic)
+            
+            # Render and store frame
+            frame = self.eval_env.render()
+            
+            if frame is not None:
+                if self.flip_vertical:
+                    frame = np.flipud(frame)
+                frames.append(frame)
+            
+            # Step environment
+            obs, _, done, truncated, _ = self.eval_env.step(action)
+            done = done or truncated
+        
+        # Save video
+        if frames:
+            video_path = os.path.join(
+                self.video_folder, 
+                f"{self.name_prefix}-episode-{self.episode_count}.mp4"
+            )
+            imageio.mimsave(video_path, frames, fps=30)
+            
+            if self.verbose >= 1:
+                print(f"Video saved to {video_path}")
+        
+        self.episode_count += 1
 
 def modify_env_integrator(env, integrator=None, frame_skip=None):
     if integrator is not None:
         assert integrator in ['euler', 'rk4'], "ERROR: integrator must be euler or rk4"
         if integrator == 'euler':
-            env.unwrapped.model.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
+            env.unwrapped.model.opt.integrator = 0  # mjINT_EULER
         elif integrator == 'rk4':
-            env.unwrapped.model.opt.integrator = mujoco.mjtIntegrator.mjINT_RK4
+            env.unwrapped.model.opt.integrator = 1  # mjINT_RK4
     else:
         print(f"WARNING: using default integrator for forward, {env.unwrapped.model.opt.integrator}")
     
@@ -95,7 +229,7 @@ def set_state_ant(env: gym.Env, state: np.ndarray):
     env.unwrapped.set_state(qpos, qvel)
 
 
-def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+def parse_raw_observations_pendulum(obs_array: np.ndarray, _obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """
     Parse raw observation array into dictionary format expected by the dataset.
     
@@ -132,7 +266,7 @@ def parse_raw_observations_pendulum(obs_array: np.ndarray, obs_shape_meta: Dict[
     
     return obs_dict
 
-def parse_raw_observations_ant(obs_array: np.ndarray, info:dict, obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
+def parse_raw_observations_ant(obs_array: np.ndarray, info:dict, _obs_shape_meta: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """
     Parse raw observation array into dictionary format expected by the dataset.
     
@@ -171,14 +305,14 @@ def get_state_from_obs_ant(obs_array: np.ndarray, info:dict) -> np.ndarray:
     full_obs = np.concatenate([[x_pos], [y_pos],obs_array], axis=-1)
     return full_obs
 
-def get_state_from_obs_ant_nopos(obs_array: np.ndarray, info:dict) -> np.ndarray:
+def get_state_from_obs_ant_nopos(obs_array: np.ndarray, _info:dict) -> np.ndarray:
     """
     Get state from observation array for ant environment.
     """
     return obs_array
 
 
-def get_state_from_obs_fetch(obs: dict, info:dict) -> np.ndarray:
+def get_state_from_obs_fetch(obs: dict, _info: dict) -> np.ndarray:
     """
     Get state from observation array for fetch environment.
     """

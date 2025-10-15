@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from stable_baselines3 import PPO, DDPG, HerReplayBuffer, SAC
-from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList
 from stable_baselines3.common.noise import NormalActionNoise
@@ -11,7 +10,7 @@ from stable_baselines3.common.utils import polyak_update
 import wandb
 from wandb.integration.sb3 import WandbCallback
 from cluster_utils import set_cluster_graphics_vars
-from gymnasium.wrappers import RecordVideo
+
 import os
 from datetime import datetime   
 import sys
@@ -19,6 +18,7 @@ import argparse
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from envs.register_envs import register_custom_envs
+from envs.env_utils import make_vec_env, VideoCallback, make_env
 
 import torch as th
 from stable_baselines3.ddpg.ddpg import DDPG as SB3_DDPG
@@ -127,21 +127,9 @@ def main(config):
     env_id = config.get('env_id', "InvertedPendulum-v5")
     env_kwargs = config.get('env_kwargs', {})
     n_envs = config.get('n_envs', 4)
-    video_freq = config.get('video_freq', 1)
-    model_type = config.get('model_class', 'PPO')
+    eval_freq = config.get('eval_freq', 10000)
     
-    # Apply wrappers for DDPG
-    if model_type == 'DDPG':
-        # Create a wrapper function for DDPG-specific environment modifications
-        def make_ddpg_env():
-            env = gym.make(env_id, **env_kwargs)
-            # Apply action L2 norm coefficient: 1.0
-            env = ActionL2NormWrapper(env, l2_coeff=1.0)
-            return env
-        
-        env = make_vec_env(make_ddpg_env, n_envs=n_envs)
-    else:
-        env = make_vec_env(env_id, n_envs=n_envs, env_kwargs=env_kwargs)  # Vectorized environment for faster training
+    env = make_vec_env(env_id, n_envs=n_envs, eval_mode=False, **env_kwargs)  # Vectorized environment for faster training
 
     # Create unified run directory
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -157,14 +145,7 @@ def main(config):
     os.makedirs(logs_dir, exist_ok=True)
 
     # Create evaluation environment and local video recorder (not W&B)
-    eval_env = gym.make(env_id, render_mode="rgb_array", **env_kwargs)
-    eval_env = RecordVideo(
-        eval_env,
-        video_folder=videos_dir,
-        episode_trigger=lambda ep_id: ep_id % video_freq == 0,
-        name_prefix="evaluation",
-        disable_logger=True,
-    )
+    eval_env = make_env(env_id, eval_mode=True, **env_kwargs)
 
     # Initialize Weights & Biases
     run = wandb.init(
@@ -181,22 +162,28 @@ def main(config):
     # Initialize the model using the make_model function
     model = make_model(env, config, tb_dir)
 
-
-
     # Set up evaluation callback
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=models_dir,
         log_path=logs_dir,
         eval_freq=10000,
-        deterministic=False,
+        deterministic=True,
         render=False
+    )
+
+    video_callback = VideoCallback(eval_env,
+        video_folder=videos_dir,
+        eval_freq=eval_freq,
+        name_prefix="evaluation",
+        deterministic=True,
+        flip_vertical="robosuite" in env_id.lower() # robosuite env renders are upside down
     )
 
     # Set up W&B callback
     wandb_callback = WandbCallback()
 
-    callbacks = CallbackList([eval_callback, wandb_callback])
+    callbacks = CallbackList([eval_callback, video_callback, wandb_callback])
 
     # Train the agent
     print("Training the PPO agent...")
@@ -250,7 +237,7 @@ if __name__ == "__main__":
     #     'env_kwargs': {},
     #     'wandb_mode': 'online',
     #     'total_steps': 10000000,
-    #     'video_freq': 100,
+    #     'eval_freq': 100,
     #     'model_class': 'DDPG',
     #     'use_her': True,
     #     'learning_starts': 10000
@@ -270,7 +257,7 @@ if __name__ == "__main__":
         'env_kwargs': {},
         'wandb_mode': 'online',
         'total_steps': 100000000,
-        'video_freq': 100
+        'eval_freq': 100
     }
 
     main(config)
