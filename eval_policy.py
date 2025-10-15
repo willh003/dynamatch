@@ -406,6 +406,129 @@ def plot_episode_rewards(all_episode_rewards, video_run_dir):
         print(f"Saved combined reward plot to: {combined_plot_path}")
 
 
+def compute_frequency(action_values):
+    """
+    Compute the frequency of sign changes in the first action dimension.
+    
+    Args:
+        action_values: List of action arrays for the first episode
+    
+    Returns:
+        Frequency of sign changes (0 to 1)
+    """
+    if len(action_values) == 0:
+        return 0.0
+    
+    # Convert to numpy array and get first dimension
+    actions_array = np.array(action_values)
+    if actions_array.ndim == 1:
+        actions_array = actions_array.reshape(1, -1)
+    
+    if actions_array.shape[1] == 0:
+        return 0.0
+    
+    action_values_dim_0 = actions_array[:, 0]
+    
+    if len(action_values_dim_0) < 2:
+        return 0.0
+    
+    period_counter = 0
+    for i in range(len(action_values_dim_0) - 1):
+        current_action = action_values_dim_0[i]
+        next_action = action_values_dim_0[i + 1]
+        
+        # Count sign changes from positive to negative
+        if current_action > 0 and next_action < 0:
+            period_counter += 1
+    
+    return period_counter / (len(action_values_dim_0) - 1)
+
+
+
+def create_action_dim_overlay_frame(frame, action_values, step_idx, total_steps, action_dim=0):
+    """
+    Create an overlay frame with action dimension plot for a specific step.
+    
+    Args:
+        frame: Video frame (numpy array)
+        action_values: Array of action values for the first dimension
+        step_idx: Current step index
+        total_steps: Total number of steps
+        action_dim: Which action dimension to plot (default: 0)
+    
+    Returns:
+        Modified frame with action plot overlay
+    """
+    
+    # Create a figure for the overlay - make it wider
+    fig, ax = plt.subplots(figsize=(8, 3))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Plot the action dimension up to current step
+    steps = np.arange(min(step_idx + 1, len(action_values)))
+    current_actions = action_values[:step_idx + 1]
+    
+    ax.plot(steps, current_actions, 'b-', linewidth=3, alpha=0.8)
+    ax.fill_between(steps, current_actions, alpha=0.3, color='blue')
+    
+    # Highlight current step
+    if step_idx < len(action_values):
+        ax.scatter([step_idx], [action_values[step_idx]], color='red', s=80, zorder=5)
+    
+    # Formatting
+    ax.set_xlabel('Step', fontsize=12)
+    ax.set_ylabel(f'Action Dim {action_dim}', fontsize=12)
+    ax.set_title(f'Action Dim {action_dim} Over Time', fontsize=14)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, total_steps - 1)
+    ax.tick_params(axis='both', which='major', labelsize=10)
+    
+    # Convert plot to image
+    fig.canvas.draw()
+    # Get the RGB data from the canvas
+    buf = fig.canvas.buffer_rgba()
+    plot_img = np.asarray(buf)
+    # Convert RGBA to RGB
+    plot_img = plot_img[:, :, :3]
+    plt.close(fig)
+    
+    # Resize plot to fit in video frame - make it wider
+    target_height = min(150, frame.shape[0] // 3)
+    target_width = min(400, frame.shape[1] // 2)
+    
+    # Simple resize using numpy (nearest neighbor)
+    height_ratio = target_height / plot_img.shape[0]
+    width_ratio = target_width / plot_img.shape[1]
+    
+    new_height = int(plot_img.shape[0] * height_ratio)
+    new_width = int(plot_img.shape[1] * width_ratio)
+    
+    # Resize plot image
+    resized_plot = np.zeros((target_height, target_width, 3), dtype=np.uint8)
+    for i in range(min(new_height, target_height)):
+        for j in range(min(new_width, target_width)):
+            src_i = int(i / height_ratio)
+            src_j = int(j / width_ratio)
+            if src_i < plot_img.shape[0] and src_j < plot_img.shape[1]:
+                resized_plot[i, j] = plot_img[src_i, src_j]
+    
+    # Create overlay frame
+    overlay_frame = frame.copy()
+    
+    # Position the plot in the top center area
+    start_y = 10
+    start_x = (frame.shape[1] - target_width) // 2  # Center horizontally
+    
+    # Add semi-transparent background
+    overlay_frame[start_y:start_y + target_height, start_x:start_x + target_width] = \
+        0.7 * overlay_frame[start_y:start_y + target_height, start_x:start_x + target_width] + \
+        0.3 * resized_plot
+    
+    return overlay_frame
+
+
+
 def plot_episode_trajectories(all_episode_positions, video_run_dir):
     """
     Create separate plots of x vs z trajectories for each episode and combined.
@@ -737,6 +860,11 @@ def evaluate_and_record(
     all_episode_positions = []  # Track positions per episode (only for ant environments)
     is_ant_env = "ant" in env_id.lower()
     
+    # Track actions for first episode only
+    first_episode_actions = []
+    first_episode_translated_actions = []  # For action translators
+    first_episode_tracked = False
+    
     for episode_idx in range(min(5, num_episodes)):
         obs, info = video_env.reset(seed=seed)
         episode_return = 0.0
@@ -751,11 +879,18 @@ def evaluate_and_record(
                 
                 
                 if len(translated_action.shape) > 1:
-                    base_action = base_action[0]
                     translated_action = translated_action[0]
+                    
+                if len(base_action.shape) > 1:
+                    base_action = base_action[0]
                     
                 all_actions.append(base_action)
                 all_translated_actions.append(translated_action)
+                
+                # Track actions for first episode
+                if episode_idx == 0 and not first_episode_tracked:
+                    first_episode_actions.append(base_action.copy())
+                    first_episode_translated_actions.append(translated_action.copy())
 
                 action_to_step = translated_action
             else:
@@ -763,6 +898,11 @@ def evaluate_and_record(
                 action, _ = model.predict(obs, deterministic=deterministic)
                 action_to_step = action
                 all_actions.append(action)
+                
+                # Track actions for first episode
+                if episode_idx == 0 and not first_episode_tracked:
+                    first_episode_actions.append(action.copy())
+                    print(f"Collected action {len(first_episode_actions)}: action shape {action.shape}")
 
             if len(action_to_step.shape) > 1:
                 action_to_step = action_to_step[0]
@@ -794,6 +934,10 @@ def evaluate_and_record(
         print(f"Episode {episode_idx + 1}/{min(5, num_episodes)} return: {episode_return:.2f}, final x displacement: {final_x_displacement:.2f}")
         all_returns.append(episode_return)
         all_episode_rewards.append(episode_rewards)  # Store rewards for this episode
+        
+        # Mark first episode as tracked
+        if episode_idx == 0:
+            first_episode_tracked = True
 
     # Plot results
     all_actions = np.array(all_actions)
@@ -849,6 +993,78 @@ def evaluate_and_record(
         if len(frames) > 0:
             gif_path = mp4_file.with_suffix(".gif")
             imageio.mimsave(str(gif_path), frames, duration=1.0 / fps)
+    
+
+    freq = compute_frequency(first_episode_actions)
+    print(f"METRIC: Frequency of first episode actions: {freq}")
+
+    # Add action dimension overlay to the first video
+    if len(first_episode_actions) > 0 and len(mp4_files) > 0:
+        print("Adding action dimension overlay to first video...")
+        first_video_path = mp4_files[0]  # First video (episode 0)
+        
+        # Convert actions to numpy array
+        actions_array = np.array(first_episode_actions)
+        if actions_array.ndim == 1:
+            actions_array = actions_array.reshape(1, -1)
+        
+        # Get first action dimension
+        first_action_dim = actions_array[:, 0] if actions_array.shape[1] > 0 else np.array([])
+        
+        if len(first_action_dim) > 0:
+            # Read the original video
+            reader = imageio.get_reader(str(first_video_path))
+            meta = reader.get_meta_data()
+            fps = meta["fps"] if "fps" in meta else 30
+            
+            # Create output video with overlay
+            output_path = str(first_video_path).replace('.mp4', '_with_action_plot.mp4')
+            writer = imageio.get_writer(output_path, fps=fps, codec='libx264')
+            
+            total_frames = len(first_action_dim)
+            for idx, frame in enumerate(reader):
+                if idx >= total_frames:
+                    break
+                
+                # Create overlay frame
+                overlay_frame = create_action_dim_overlay_frame(
+                    frame, first_action_dim, idx, total_frames, action_dim=0
+                )
+                
+                writer.append_data(overlay_frame)
+            
+            writer.close()
+            reader.close()
+            print(f"Created video with action plot overlay: {output_path}")
+            
+            # Save the final action dimension plot as a separate PNG
+            final_plot_path = os.path.join(video_run_dir, "first_episode_action_dim_0_plot.png")
+            fig, ax = plt.subplots(figsize=(12, 6))
+            steps = np.arange(len(first_action_dim))
+            ax.plot(steps, first_action_dim, 'b-', linewidth=3, alpha=0.8)
+            ax.fill_between(steps, first_action_dim, alpha=0.3, color='blue')
+            ax.set_xlabel('Step', fontsize=14)
+            ax.set_ylabel('Action Dim 0', fontsize=14)
+            ax.set_title('First Episode - Action Dimension 0 Over Time', fontsize=16)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(axis='both', which='major', labelsize=12)
+            plt.tight_layout()
+            plt.savefig(final_plot_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            print(f"Saved action dimension plot as PNG: {final_plot_path}")
+            
+            # Also create GIF version
+            gif_output_path = output_path.replace('.mp4', '.gif')
+            reader = imageio.get_reader(output_path)
+            gif_frames = []
+            for idx, frame in enumerate(reader):
+                if idx >= 100:  # Limit GIF to 100 frames
+                    break
+                gif_frames.append(frame)
+            if len(gif_frames) > 0:
+                imageio.mimsave(gif_output_path, gif_frames, duration=1.0 / fps)
+                print(f"Created GIF with action plot overlay: {gif_output_path}")
+            reader.close()
 
     print(f"Saved videos to: {video_run_dir}")
     print(f"Mean return: {np.mean(all_returns):.2f} +/- {np.std(all_returns):.2f}")

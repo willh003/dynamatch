@@ -1,0 +1,10 @@
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
+name: ant_flow_original_nopos
+action_dim: 8 
+obs_dim: 105
+
+diffusion_step_embed_dim: 64
+down_dims: [64, 128, 256]
+num_inference_steps: 10
+
+checkpoint_path: null

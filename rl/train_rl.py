@@ -263,14 +263,14 @@ if __name__ == "__main__":
         #'env_id': 'FetchPickAndPlaceDense-v4',
         #'env_id': 'AntModifiedPhysics-v1',
         #'env_id': 'HandReachObsDense-v3',
-        #'policy_type': 'MultiInputPolicy',
+        'policy_type': 'MultiInputPolicy',
         'model_class': args.model_class,
         'n_envs': 64,
         #'policy_type': 'MlpPolicy',
         'env_kwargs': {},
         'wandb_mode': 'online',
-        'total_steps': 50000000,
-        'video_freq': 1
+        'total_steps': 100000000,
+        'video_freq': 100
     }
 
     main(config)

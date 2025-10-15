@@ -1,0 +1,9 @@
+_target_: generative_policies.action_translation.FlowActionOnly
+name: ant_actonly_modphys
+action_dim: 8
+
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
+num_inference_steps: 10
+
+checkpoint_path: /home/wph52/weird/dynamics/datasets/ant/relabeled_actions/ant_modified_physics/ant_flow_original_id/translator_ant_actonly_modphys_20251013_133118.pth

@@ -12,7 +12,8 @@ from .custom_ant import (
     make_integrable_ant_high_friction,
     make_integrable_ant_low_friction,
     make_ant_high_friction,
-    make_ant_modified_physics
+    make_ant_modified_physics,
+    make_ant
 )
 
 from .custom_fetch import (
@@ -58,6 +59,10 @@ def register_custom_envs():
             make_inverted_pendulum_integrable_mlp_shift_state_conditional
         ),
         # Custom Ant environments with different contact parameters
+        (
+            "AntNoPos-v1",
+            make_ant
+        ),
         (
             "AntHighFriction-v1",
             make_ant_high_friction

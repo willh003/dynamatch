@@ -1,0 +1,5 @@
+defaults:
+  - source_policy: ant_ppo_5M
+  - action_translator: ant_bc_modphys
+
+_target_: generative_policies.action_translation.ActionTranslatorPolicy

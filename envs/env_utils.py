@@ -3,6 +3,18 @@ import numpy as np
 import mujoco
 from typing import Dict, Any
 
+
+def make_env(env_id: str, **kwargs):
+    if "Robosuite" in env_id:   
+        import robosuite as suite
+        suite_id = env_id.split("Robosuite")[-1]
+        env = suite.make(suite_id, **kwargs)
+    else:
+        env = gym.make(env_id, **kwargs)
+
+    return env
+
+
 def modify_env_integrator(env, integrator=None, frame_skip=None):
     if integrator is not None:
         assert integrator in ['euler', 'rk4'], "ERROR: integrator must be euler or rk4"
@@ -159,6 +171,12 @@ def get_state_from_obs_ant(obs_array: np.ndarray, info:dict) -> np.ndarray:
     full_obs = np.concatenate([[x_pos], [y_pos],obs_array], axis=-1)
     return full_obs
 
+def get_state_from_obs_ant_nopos(obs_array: np.ndarray, info:dict) -> np.ndarray:
+    """
+    Get state from observation array for ant environment.
+    """
+    return obs_array
+
 
 def get_state_from_obs_fetch(obs: dict, info:dict) -> np.ndarray:
     """
@@ -178,6 +196,8 @@ def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
     if "Pendulum" in env_id:
         return get_state_from_obs_pendulum(obs)
     elif "Ant" in env_id:
+        if "NoPos" in env_id: # don't append (x,y) position to state
+            return get_state_from_obs_ant_nopos(obs, info)
         return get_state_from_obs_ant(obs, info)
     elif "Fetch" in env_id:
         return get_state_from_obs_fetch(obs, info)

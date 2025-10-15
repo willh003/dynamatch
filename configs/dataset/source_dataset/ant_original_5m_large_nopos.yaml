@@ -1,0 +1,28 @@
+_target_: null
+name: ant_5m_large
+
+# Dataset collection parameters
+model_path: /home/wph52/weird/dynamics/rl/runs/Ant-v5_20251002_211516/models/best_model.zip
+env_id: AntNoPos-v1
+buffer_dir: /home/wph52/weird/dynamics/datasets/ant/transitions/ant_5m_large
+env_kwargs: null
+num_episodes: 100
+max_steps_per_episode: 1000
+deterministic: false
+seed: null
+append: false
+
+shape_meta:
+  # acceptable types: rgb, low_dim
+  obs:
+    "full_obs":
+      shape: [107]
+      type: low_dim
+  action:
+    shape: [8]
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: True
+normalize_lowdim: True
+val_ratio: 0.20
