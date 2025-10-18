@@ -24,7 +24,7 @@ def test_policy():
             verbose=1,
         )
     
-    eval_env = make_env("InvertedPendulum-v5", eval_mode=True)
+    eval_env = make_env("InvertedPendulum-v5", render=True)
   
 
     video_callback = VideoCallback(eval_env,

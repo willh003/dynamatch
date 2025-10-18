@@ -253,6 +253,8 @@ def evaluate_policy(
         n_envs = 1
     episode_rewards = []
     episode_lengths = []
+    first_episode_actions = []
+    first_episode_done = False
 
     episode_count = 0
     current_rewards = np.zeros(n_envs)
@@ -285,6 +287,9 @@ def evaluate_policy(
             if callback is not None:
                 callback(locals(), globals())
 
+            if not first_episode_done:
+                first_episode_actions.append(actions.copy())
+
             if terminated or truncated:
                 if is_monitor_wrapped:
                     # Atari wrapper can send a "done" signal when
@@ -306,6 +311,11 @@ def evaluate_policy(
                 current_rewards = 0
                 current_lengths = 0
 
+                first_episode_done = True
+                plt.plot(np.array(first_episode_actions)[:,-1])
+                plt.savefig( "first_episode_actions.png")
+                plt.close()
+
             observation = new_observation
 
             if render:
@@ -317,6 +327,10 @@ def evaluate_policy(
         assert mean_reward > reward_threshold, "Mean reward below threshold: " f"{mean_reward:.2f} < {reward_threshold:.2f}"
     if return_episode_rewards:
         return episode_rewards, episode_lengths
+
+    
+
+
     return mean_reward, std_reward
 
 
@@ -823,22 +837,21 @@ def evaluate_and_record(
         print_model_info(model)
 
     # Quick quantitative evaluation (no video)
-    eval_env = make_env(env_id, render=False, **env_kwargs)
+    eval_env = make_env(env_id, render=True, **env_kwargs)
     eval_env = Monitor(eval_env)
 
 
     # Ensure we get rgb frames for video generation
     video_env = make_env(env_id, render=True, **env_kwargs)
-    
     video_callback = VideoCallback(video_env,
         video_folder=video_dir,
         eval_freq=1,
         name_prefix="evaluation",
-        max_steps_per_episode=max_steps_per_episode,
         deterministic=True,
         flip_vertical="robosuite" in env_id.lower()
     )
     video_callback.init_callback(model)
+
     
     video_callback.on_step()
     video_callback.on_step()
@@ -854,230 +867,8 @@ def evaluate_and_record(
         is_monitor_wrapped=True,
         is_action_translator=is_action_translator
     )
-
-    # print(f"Mean reward: {mean_reward:.2f} +/- {std_reward:.2f} over {num_episodes} episodes")
-
-    # Rollout episodes with video recording
-    all_actions = []
-    all_translated_actions = []
-    all_returns = []
-    all_mj_actuator = []
-    all_mj_constraint = []
-    all_mj_xmat = []
-    all_episode_rewards = []  # Track rewards per episode
-    all_episode_positions = []  # Track positions per episode (only for ant environments)
-    is_ant_env = "ant" in env_id.lower()
-    
-    # Track actions for first episode only
-    first_episode_actions = []
-    first_episode_translated_actions = []  # For action translators
-    first_episode_tracked = False
-    
-    for episode_idx in range(min(5, num_episodes)):
-        obs, info = video_env.reset(seed=seed)
-        episode_return = 0.0
-        episode_rewards = []  # Track rewards for this episode
-        episode_positions = [] if is_ant_env else None  # Track positions for this episode (only for ant environments)
-        for step in range(max_steps_per_episode):
-            if is_action_translator:
-                # ActionTranslator returns (action, state) tuple
-                full_observation = get_state_from_obs(obs, info, env_id)
-
-                translated_action, base_action = model.predict_base_and_translated(policy_observation=obs, translator_observation=full_observation, deterministic=deterministic)
-                
-                
-                if len(translated_action.shape) > 1:
-                    translated_action = translated_action[0]
-                    
-                if len(base_action.shape) > 1:
-                    base_action = base_action[0]
-                    
-                all_actions.append(base_action)
-                all_translated_actions.append(translated_action)
-                
-                # Track actions for first episode
-                if episode_idx == 0 and not first_episode_tracked:
-                    first_episode_actions.append(base_action.copy())
-                    first_episode_translated_actions.append(translated_action.copy())
-
-                action_to_step = translated_action
-            else:
-                # Regular PPO model
-                action, _ = model.predict(obs, deterministic=deterministic)
-                action_to_step = action
-                all_actions.append(action)
-                
-                # Track actions for first episode
-                if episode_idx == 0 and not first_episode_tracked:
-                    first_episode_actions.append(action.copy())
-                    print(f"Collected action {len(first_episode_actions)}: action shape {action.shape}")
-
-            if len(action_to_step.shape) > 1:
-                action_to_step = action_to_step[0]
-
-            obs, reward, terminated, truncated, info = video_env.step(action_to_step)
-
-            # save the actuator forces, constraint forces, and xmat (body rotation matrix)   
-            all_mj_actuator.append(video_env.unwrapped.data.qfrc_actuator.copy())
-            all_mj_constraint.append(video_env.unwrapped.data.qfrc_constraint.copy())
-            all_mj_xmat.append(video_env.unwrapped.data.xmat.copy())
-
-            episode_return += float(reward)
-            episode_rewards.append(float(reward))  # Track reward for this step
-            
-            # Track positions from info dictionary and observation (only for ant environments)
-            if is_ant_env and episode_positions is not None:
-                x_pos = info.get('x_position', 0.0)
-                z_pos = obs[0] if len(obs) > 0 else 0.0  # z coordinate from first observation
-                episode_positions.append((x_pos, z_pos))
-            
-            if terminated or truncated:
-                break
-        # Calculate final x position displacement for ant environments
-        final_x_displacement = 0.0
-        if is_ant_env and episode_positions is not None and len(episode_positions) > 0:
-            final_x_displacement = episode_positions[-1][0]  # x coordinate of final position
-            all_episode_positions.append(episode_positions)  # Store positions for this episode
-        
-        print(f"Episode {episode_idx + 1}/{min(5, num_episodes)} return: {episode_return:.2f}, final x displacement: {final_x_displacement:.2f}")
-        all_returns.append(episode_return)
-        all_episode_rewards.append(episode_rewards)  # Store rewards for this episode
-        
-        # Mark first episode as tracked
-        if episode_idx == 0:
-            first_episode_tracked = True
-
-    # Plot results
-    all_actions = np.array(all_actions)
-    all_returns = np.array(all_returns)
-
-    video_run_dir = video_dir
-    
-    # Plot episode rewards
-    plot_episode_rewards(all_episode_rewards, video_run_dir)
-    
-    # Plot episode positions (only for ant environments)
-    if is_ant_env and len(all_episode_positions) > 0:
-        plot_episode_positions(all_episode_positions, video_run_dir)
-        plot_episode_trajectories(all_episode_positions, video_run_dir)
-
-    if len(all_mj_actuator) > 0 and "Ant" in env_id:
-        mj_model = video_env.unwrapped.model
-
-        all_mj_ankle_actuator = []
-        all_mj_ankle_constraint = []
-        all_mj_ankle_actuator_world = []
-        all_mj_ankle_constraint_world = []
-        for qfrc,constraint, xmat in zip(all_mj_actuator, all_mj_constraint, all_mj_xmat):
-            mj_ankle_actuator, mj_ankle_actuator_world = get_ant_ankle_force(qfrc, xmat, mj_model)
-            mj_ankle_constraint, mj_ankle_constraint_world = get_ant_ankle_force(constraint, xmat, mj_model)
-
-            all_mj_ankle_actuator.append(mj_ankle_actuator)
-            all_mj_ankle_constraint.append(mj_ankle_constraint)
-            all_mj_ankle_actuator_world.append(mj_ankle_actuator_world)
-            all_mj_ankle_constraint_world.append(mj_ankle_constraint_world)
-
-        all_mj_ankle_actuator = np.array(all_mj_ankle_actuator)
-        all_mj_ankle_constraint = np.array(all_mj_ankle_constraint)
-        all_mj_ankle_actuator_world = np.array(all_mj_ankle_actuator_world)
-        all_mj_ankle_constraint_world = np.array(all_mj_ankle_constraint_world)
-
-        # world are shape (N, 4, 3), and actuator are shape (N, 4)
-        # Create plots for ankle forces
-        # plot_ankle_forces(all_mj_ankle_actuator, all_mj_ankle_constraint, 
-        #                  all_mj_ankle_actuator_world, all_mj_ankle_constraint_world, 
-        #                  video_run_dir)
-    
-    
-    # Export GIFs alongside MP4s, limiting GIFs to at most 100 frames
-    mp4_files = sorted(Path(video_run_dir).glob("evaluation-episode-*.mp4"))
-    for mp4_file in mp4_files:
-        reader = imageio.get_reader(str(mp4_file))
-        meta = reader.get_meta_data()
-        fps = meta["fps"] if "fps" in meta else 30
-        frames = []
-        for idx, frame in enumerate(reader):
-            if idx >= 100:
-                break
-            frames.append(frame)
-        if len(frames) > 0:
-            gif_path = mp4_file.with_suffix(".gif")
-            imageio.mimsave(str(gif_path), frames, duration=1.0 / fps)
-    
-
-    freq = compute_frequency(first_episode_actions)
-    print(f"METRIC: Frequency of first episode actions: {freq}")
-
-    # Add action dimension overlay to the first video
-    if len(first_episode_actions) > 0 and len(mp4_files) > 0:
-        print("Adding action dimension overlay to first video...")
-        first_video_path = mp4_files[0]  # First video (episode 0)
-        
-        # Convert actions to numpy array
-        actions_array = np.array(first_episode_actions)
-        if actions_array.ndim == 1:
-            actions_array = actions_array.reshape(1, -1)
-        
-        # Get first action dimension
-        first_action_dim = actions_array[:, 0] if actions_array.shape[1] > 0 else np.array([])
-        
-        if len(first_action_dim) > 0:
-            # Read the original video
-            reader = imageio.get_reader(str(first_video_path))
-            meta = reader.get_meta_data()
-            fps = meta["fps"] if "fps" in meta else 30
-            
-            # Create output video with overlay
-            output_path = str(first_video_path).replace('.mp4', '_with_action_plot.mp4')
-            writer = imageio.get_writer(output_path, fps=fps, codec='libx264')
-            
-            total_frames = len(first_action_dim)
-            for idx, frame in enumerate(reader):
-                if idx >= total_frames:
-                    break
-                
-                # Create overlay frame
-                overlay_frame = create_action_dim_overlay_frame(
-                    frame, first_action_dim, idx, total_frames, action_dim=0
-                )
-                
-                writer.append_data(overlay_frame)
-            
-            writer.close()
-            reader.close()
-            print(f"Created video with action plot overlay: {output_path}")
-            
-            # Save the final action dimension plot as a separate PNG
-            final_plot_path = os.path.join(video_run_dir, "first_episode_action_dim_0_plot.png")
-            fig, ax = plt.subplots(figsize=(12, 6))
-            steps = np.arange(len(first_action_dim))
-            ax.plot(steps, first_action_dim, 'b-', linewidth=3, alpha=0.8)
-            ax.fill_between(steps, first_action_dim, alpha=0.3, color='blue')
-            ax.set_xlabel('Step', fontsize=14)
-            ax.set_ylabel('Action Dim 0', fontsize=14)
-            ax.set_title('First Episode - Action Dimension 0 Over Time', fontsize=16)
-            ax.grid(True, alpha=0.3)
-            ax.tick_params(axis='both', which='major', labelsize=12)
-            plt.tight_layout()
-            plt.savefig(final_plot_path, dpi=150, bbox_inches='tight')
-            plt.close()
-            print(f"Saved action dimension plot as PNG: {final_plot_path}")
-            
-            # Also create GIF version
-            gif_output_path = output_path.replace('.mp4', '.gif')
-            reader = imageio.get_reader(output_path)
-            gif_frames = []
-            for idx, frame in enumerate(reader):
-                if idx >= 100:  # Limit GIF to 100 frames
-                    break
-                gif_frames.append(frame)
-            if len(gif_frames) > 0:
-                imageio.mimsave(gif_output_path, gif_frames, duration=1.0 / fps)
-                print(f"Created GIF with action plot overlay: {gif_output_path}")
-            reader.close()
-
-    print(f"Saved videos to: {video_run_dir}")
-    print(f"Mean return: {np.mean(all_returns):.2f} +/- {np.std(all_returns):.2f}")
+    print(f"Saved videos to: {video_dir}")
+    print(f"Mean return: {mean_reward:.2f} +/- {std_reward:.2f}")
 
 
 def parse_args():
@@ -1091,7 +882,7 @@ def parse_args():
     # Environment arguments
     parser.add_argument("--env_id", default="InvertedPendulum-v5", help="Gymnasium env id")
     parser.add_argument("--episodes", type=int, default=8, help="Number of episodes to eval (max 5 video recorded)")
-    parser.add_argument("--max_steps_per_episode", type=int, default=1000, help="Max steps per episode")
+    parser.add_argument("--max_steps", type=int, default=1000, help="Max steps per episode")
     parser.add_argument("--stochastic", action="store_true", default=False, help="Use stochastic actions instead of stochastic")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     
@@ -1114,7 +905,7 @@ if __name__ == "__main__":
         action_translator_checkpoint=args.action_translator_checkpoint,
         env_id=args.env_id,
         num_episodes=args.episodes,
-        max_steps_per_episode=args.max_steps_per_episode,
+        max_steps_per_episode=args.max_steps,
         deterministic=not args.stochastic,
         seed=args.seed,
     )

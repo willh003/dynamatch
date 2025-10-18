@@ -238,6 +238,7 @@ def create_model_path_from_data_path(model_config_path, data_path):
     return model_path, path_name
 
 
+
 def main():
     parser = argparse.ArgumentParser(description='Train inverse dynamics model from inverse dynamics dataset')
     parser.add_argument('--dataset_config', type=str, required=True,

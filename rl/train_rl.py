@@ -129,7 +129,8 @@ def main(config):
     n_envs = config.get('n_envs', 4)
     eval_freq = config.get('eval_freq', 10000)
     
-    env = make_vec_env(env_id, n_envs=n_envs, eval_mode=False, **env_kwargs)  # Vectorized environment for faster training
+    env = make_vec_env(env_id, n_envs=n_envs, render=False, **env_kwargs)  # Vectorized environment for faster training
+
 
     # Create unified run directory
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -145,7 +146,7 @@ def main(config):
     os.makedirs(logs_dir, exist_ok=True)
 
     # Create evaluation environment and local video recorder (not W&B)
-    eval_env = make_env(env_id, eval_mode=True, **env_kwargs)
+    eval_env = make_env(env_id, render=True, **env_kwargs)
 
     # Initialize Weights & Biases
     run = wandb.init(
@@ -186,7 +187,7 @@ def main(config):
     callbacks = CallbackList([eval_callback, video_callback, wandb_callback])
 
     # Train the agent
-    print("Training the PPO agent...")
+    print("Training the agent...")
     model.learn(
         total_timesteps=config.get('total_steps', 1000000),
         callback=callbacks,
@@ -202,7 +203,7 @@ def main(config):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a RL policy")
     parser.add_argument("--env_id", type=str, default="FetchReachModifiedPhysics-v4", help="Environment ID")
-    parser.add_argument("--model_class", type=str, default="PPO", help="Model class")
+    parser.add_argument("--algo", type=str, default="PPO", help="Model class")
     return parser.parse_args()
 
 
@@ -250,14 +251,31 @@ if __name__ == "__main__":
         #'env_id': 'FetchPickAndPlaceDense-v4',
         #'env_id': 'AntModifiedPhysics-v1',
         #'env_id': 'HandReachObsDense-v3',
-        'policy_type': 'MultiInputPolicy',
-        'model_class': args.model_class,
-        'n_envs': 64,
+        'policy_type': 'MlpPolicy',
+        'model_class': args.algo,
+        'n_envs': 8,
         #'policy_type': 'MlpPolicy',
         'env_kwargs': {},
         'wandb_mode': 'online',
-        'total_steps': 100000000,
-        'eval_freq': 100
+        'total_steps': 50000000,
+        'eval_freq': 10000
     }
+
+    # config = {
+    #     #'env_id': 'Robosuite-Lift-Panda',
+    #     #'env_id': 'Robosuite-Door-Panda',
+    #     #'env_id': 'Robosuite-HighFriction-Door-Panda',
+    #     'env_id': 'Robosuite-LowFriction-Slide-Panda',
+    #     #'env_id': 'FetchPickAndPlaceDense-v4',
+    #     #'env_id': 'AntModifiedPhysics-v1',
+    #     #'env_id': 'HandReachObsDense-v3',
+    #     'policy_type': 'MultiInputPolicy',
+    #     'model_class': 'SAC',
+    #     'n_envs': 64,
+    #     #'policy_type': 'MlpPolicy',
+    #     'wandb_mode': 'online',
+    #     'total_steps': 50000000,
+    #     'eval_freq': 100,
+    # }
 
     main(config)

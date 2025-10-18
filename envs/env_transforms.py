@@ -2,6 +2,8 @@ import mujoco
 import torch
 import torch.nn as nn
 import gymnasium as gym
+from robosuite.utils.mjmod import DynamicsModder
+import numpy as np
 
 class ObsFromDictWrapper(gym.Wrapper):
     def __init__(self, env, obs_key='observation'):
@@ -57,42 +59,45 @@ class ModifyPhysicsWrapper(gym.Wrapper):
                  solref_dampratio_mult=1.0, solimp_dmin_mult=1.0, solimp_dmax_mult=1.0):
         super().__init__(env)
         
+        # Get the MuJoCo model - handle both regular MuJoCo envs and Robosuite envs
+        model = self.unwrapped.model
+
         # Modify friction
-        for i in range(self.unwrapped.model.ngeom):
-            self.unwrapped.model.geom_friction[i] *= friction_mult
+        for i in range(model.ngeom):
+            model.geom_friction[i] *= friction_mult
         
         # Modify damping
-        for i in range(self.unwrapped.model.njnt):
-            self.unwrapped.model.dof_damping[i] *= damping_mult
+        for i in range(model.njnt):
+            model.dof_damping[i] *= damping_mult
         
         # Modify masses
-        for i in range(self.unwrapped.model.nbody):
-            self.unwrapped.model.body_mass[i] *= mass_mult
+        for i in range(model.nbody):
+            model.body_mass[i] *= mass_mult
         
         # Modify armature (rotor inertia)
-        for i in range(self.unwrapped.model.njnt):
-            self.unwrapped.model.dof_armature[i] *= armature_mult
+        for i in range(model.njnt):
+            model.dof_armature[i] *= armature_mult
         
         # Modify actuator gear ratios
-        for i in range(self.unwrapped.model.nu):
-            self.unwrapped.model.actuator_gear[i] *= gear_mult
+        for i in range(model.nu):
+            model.actuator_gear[i] *= gear_mult
         
         # Modify contact solver reference (solref)
-        for i in range(self.unwrapped.model.ngeom):
-            self.unwrapped.model.geom_solref[i, 0] *= solref_timeconst_mult
-            self.unwrapped.model.geom_solref[i, 1] *= solref_dampratio_mult
+        for i in range(model.ngeom):
+            model.geom_solref[i, 0] *= solref_timeconst_mult
+            model.geom_solref[i, 1] *= solref_dampratio_mult
         
         # Modify contact solver impedance (solimp)
-        for i in range(self.unwrapped.model.ngeom):
-            self.unwrapped.model.geom_solimp[i, 0] *= solimp_dmin_mult
-            self.unwrapped.model.geom_solimp[i, 1] *= solimp_dmax_mult
+        for i in range(model.ngeom):
+            model.geom_solimp[i, 0] *= solimp_dmin_mult
+            model.geom_solimp[i, 1] *= solimp_dmax_mult
 
 class IntegrableEnvWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
 
         self.unwrapped.frame_skip = 1
-        self.unwrapped.model.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
+        self.unwrapped.model.opt.integrator = 0  # mjINT_EULER
 
 class ActionAddWrapper(gym.Wrapper):
     def __init__(self, env, action_add=0):
@@ -190,6 +195,173 @@ class MLPActionWrapper(gym.Wrapper):
         action_transformed_numpy = action_transformed.detach().cpu().numpy()
 
         if debug:
-            print(f"Action: {action}, Transformed: {action_numpy}")
+            print(f"Action: {action}, Transformed: {action_transformed_numpy}")
 
         return super().step(action_transformed_numpy)
+
+
+
+
+def modify_suite_door_physics(env, door_mass=8.0, hinge_friction=10.0, door_inertia=None, hinge_damping=5.0, hinge_stiffness=2.0):
+    """
+    Modify the door environment's physics properties to make it much harder to open.
+    
+    Args:
+        env: Door environment instance
+        door_mass (float): New mass for the door panel (default: 8.0 kg, original: 2.43455 kg)
+        hinge_friction (float): New friction for the hinge joint (default: 10.0, original: 1.0)
+        door_inertia (list or None): New inertia tensor for door [ixx, iyy, izz] (default: None, keeps original)
+        hinge_damping (float): New damping for the hinge joint (default: 5.0, original: 1.0)
+        hinge_stiffness (float): New stiffness for the hinge joint (default: 2.0, original: 0.0)
+    """
+    # Get door body and joint references
+    door_body_id = env.object_body_ids["door"]
+    hinge_joint_id = env.sim.model.joint_name2id(env.door.joints[0])
+    
+    # Get door geom IDs for friction modification
+    door_geom_ids = [env.sim.model.geom_name2id(geom) for geom in env.door.contact_geoms]
+    
+    def print_params():
+        print(f"Door mass: {env.sim.model.body_mass[door_body_id]}")
+        print(f"Door inertia: {env.sim.model.body_inertia[door_body_id]}")
+        print(f"Hinge friction: {env.sim.model.dof_frictionloss[hinge_joint_id]}")
+        print(f"Hinge damping: {env.sim.model.dof_damping[hinge_joint_id]}")
+        print(f"Hinge stiffness: {env.sim.model.dof_armature[hinge_joint_id]}")
+        print(f"Door geom frictions: {env.sim.model.geom_friction[door_geom_ids]}")
+        print()
+    
+    print("Before modification:")
+    print_params()
+    
+    # Modify door mass (make it much heavier)
+    env.sim.model.body_mass[door_body_id] = door_mass
+    
+    # Modify door inertia if specified (make it harder to rotate)
+    if door_inertia is not None:
+        env.sim.model.body_inertia[door_body_id] = np.array(door_inertia)
+    else:
+        # Increase inertia to make door harder to rotate
+        original_inertia = env.sim.model.body_inertia[door_body_id].copy()
+        env.sim.model.body_inertia[door_body_id] = original_inertia * 3.0
+    
+    # Modify hinge joint friction (make it much more resistant)
+    env.sim.model.dof_frictionloss[hinge_joint_id] = hinge_friction
+    
+    # Modify hinge joint damping (add more resistance to movement)
+    env.sim.model.dof_damping[hinge_joint_id] = hinge_damping
+    
+    # Add stiffness to the hinge joint (spring-like resistance)
+    env.sim.model.dof_armature[hinge_joint_id] = hinge_stiffness
+    
+    # Modify door panel friction (affects grasping and contact)
+    for geom_id in door_geom_ids:
+        # Increase friction significantly
+        original_friction = env.sim.model.geom_friction[geom_id].copy()
+        env.sim.model.geom_friction[geom_id] = original_friction * 3.0  # Increase friction by 200%
+    
+    print("After modification:")
+    print_params()
+    env.sim.forward()
+
+    return env
+
+def modify_suite_cube_physics(env, mass=5.0, friction=[2.0, 0.2, 0.04]):
+
+    cube_body_id = env.sim.model.body_name2id(env.cube.root_body)
+    cube_geom_ids = [env.sim.model.geom_name2id(geom) for geom in env.cube.contact_geoms]
+
+    def print_params():
+        print(f"cube mass: {env.sim.model.body_mass[cube_body_id]}")
+        print(f"cube frictions: {env.sim.model.geom_friction[cube_geom_ids]}")
+        print()
+
+    print("Before modification:")
+    print_params()
+
+    geom_ids = [env.sim.model.geom_name2id(geom) for geom in env.cube.contact_geoms]
+    for geom_id in geom_ids:
+        env.sim.model.geom_friction[geom_id] = np.array(friction)
+
+    body_id = env.sim.model.body_name2id(env.cube.root_body)
+    env.sim.model.body_mass[body_id] = mass
+
+    # joint_names = ['robot0_joint1', 'robot0_joint2', 'robot0_joint3', 'robot0_joint4', 'robot0_joint5', 'robot0_joint6', 'robot0_joint7', 'gripper0_right_finger_joint1', 'gripper0_right_finger_joint2']
+    # jnt_ids = [env.sim.model.joint_name2id(jnt) for jnt in joint_names]
+    # for jnt_id in jnt_ids:
+    #     dof_idx = [i for i, v in enumerate(env.sim.model.dof_jntid) if v == jnt_id]    
+    # env.sim.model.dof_damping = 0.000000001
+    # env.sim.model.dof_armature = 1000000.0
+    # env.sim.model.jnt_stiffness = 0.00000001
+    env.sim.forward()
+
+    print("After modification:")
+    print_params()
+
+
+
+    return env
+
+def modify_suite_slide_physics(env, cube_mass=10.0, cube_friction=None, 
+                              table_friction=None, cube_inertia=None):
+    """
+    Modify the slide environment's physics properties to make it much harder to slide the cube.
+    This will break policies trained on the original environment.
+    
+    Args:
+        env: Slide environment instance
+        cube_mass (float): New mass for the cube (default: 10.0 kg, original: ~0.1 kg)
+        cube_friction (list): New friction for cube geoms [tangential, torsional, rolling] 
+                             (default: [0.1, 0.01, 0.001], original: [1.0, 0.5, 0.5])
+        table_friction (list): New friction for table geoms [tangential, torsional, rolling]
+                              (default: [0.1, 0.01, 0.001], original: [1.0, 0.005, 0.0001])
+        cube_inertia (list or None): New inertia tensor for cube [ixx, iyy, izz] (default: None, keeps original)
+    """
+    if cube_friction is None:
+        cube_friction = [0.1, 0.01, 0.001]
+    if table_friction is None:
+        table_friction = [0.1, 0.01, 0.001]
+    # Get cube body and geom references
+    cube_body_id = env.sim.model.body_name2id(env.cube.root_body)
+    cube_geom_ids = [env.sim.model.geom_name2id(geom) for geom in env.cube.contact_geoms]
+    
+    # Find table geoms by searching for table-related geometry
+    table_geom_ids = []
+    for i in range(env.sim.model.ngeom):
+        geom_name = env.sim.model.geom(i).name
+        if 'table' in geom_name.lower() and 'collision' in geom_name.lower():
+            table_geom_ids.append(i)
+    
+    def print_params():
+        print(f"Cube mass: {env.sim.model.body_mass[cube_body_id]}")
+        print(f"Cube inertia: {env.sim.model.body_inertia[cube_body_id]}")
+        print(f"Cube geom frictions: {env.sim.model.geom_friction[cube_geom_ids]}")
+        print(f"Table geom frictions: {env.sim.model.geom_friction[table_geom_ids]}")
+        print()
+    
+    print("Before modification:")
+    print_params()
+    
+    # Modify cube mass (make it much heavier)
+    env.sim.model.body_mass[cube_body_id] = cube_mass
+    
+    # Modify cube inertia if specified (make it harder to rotate)
+    if cube_inertia is not None:
+        env.sim.model.body_inertia[cube_body_id] = np.array(cube_inertia)
+    else:
+        # Increase inertia to make cube harder to rotate
+        original_inertia = env.sim.model.body_inertia[cube_body_id].copy()
+        env.sim.model.body_inertia[cube_body_id] = original_inertia * 5.0
+    
+    # Modify cube friction (make it much more slippery)
+    for geom_id in cube_geom_ids:
+        env.sim.model.geom_friction[geom_id] = np.array(cube_friction)
+    
+    # Modify table friction (make it much more slippery)
+    for geom_id in table_geom_ids:
+        env.sim.model.geom_friction[geom_id] = np.array(table_friction)
+    
+    print("After modification:")
+    print_params()
+    env.sim.forward()
+    
+    return env

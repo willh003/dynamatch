@@ -10,6 +10,9 @@ import imageio
 from stable_baselines3.common.env_util import make_vec_env as make_vec_env_sb3
 from stable_baselines3.common.callbacks import BaseCallback
 
+from .env_transforms import ModifyPhysicsWrapper, modify_suite_door_physics, modify_suite_cube_physics, modify_suite_slide_physics
+from .robosuite_controllable_gripper import PandaControllableGripper
+
 
 def make_vec_env(env_id: str, n_envs: int, **kwargs):
     """
@@ -18,7 +21,35 @@ def make_vec_env(env_id: str, n_envs: int, **kwargs):
     env_make_fn = lambda: make_env(env_id, **kwargs)
     return make_vec_env_sb3(env_make_fn, n_envs)
 
-def make_env(env_id: str, render_mode: str = None, eval_mode: bool = False, **kwargs):
+def parse_robosuite_env_id(env_id: str) -> dict:
+    """
+    Parse the robosuite environment id into a dictionary of information
+    """
+    env_names = ['Lift', 'Door', 'Slide']
+    robot_names =['Panda', 'Sawyer']
+    wrapper_types = ['Sparse', 'Dense']
+    physics_types = ['HighFriction', 'LowFriction', 'Normal', 'Extreme']
+
+    env_name = None
+    reward_shaping = True
+    physics_type = 'Normal'
+    robots = None
+
+    env_info = env_id.split("-")
+    for info in env_info:
+        if info in env_names:
+            env_name = info
+        elif info in robot_names:
+            robots = info
+        elif info in wrapper_types:
+            reward_shaping = info != 'Sparse'
+        elif info in physics_types:
+            physics_type = info
+
+    assert env_name is not None and robots is not None and physics_type is not None, "ERROR: could not parse environment id"
+    return env_name, robots, reward_shaping, physics_type
+
+def make_env(env_id: str, render_mode: str = None, render: bool = False, **kwargs):
     """
     For robosuite, we expect format: Robosuite-<env_id>-<robot>
     Only uses render_mode for gym environments. Otherwise, uses RobosuiteImageWrapper to get images
@@ -28,20 +59,36 @@ def make_env(env_id: str, render_mode: str = None, eval_mode: bool = False, **kw
         
         logging.getLogger("robosuite").setLevel(logging.WARNING)
         
-        suite_id = env_id.split("-")[-2]
-        robots = env_id.split("-")[-1]
-        env = suite.make(env_name = suite_id, robots=robots,    
+        env_name, robots, reward_shaping, physics_type = parse_robosuite_env_id(env_id)
+        gripper_types = ["PandaControllableGripper"] if env_name == "Lift" else ["PandaGripper"]
+
+        env = suite.make(env_name = env_name, robots=robots,    
+                        gripper_types=gripper_types,
                         has_renderer=False,
-                        has_offscreen_renderer=eval_mode,
+                        has_offscreen_renderer=render,
                         use_camera_obs=False,
                         camera_names="frontview",
-                        reward_shaping=kwargs.get('reward_shaping', True),
+                        hard_reset=False,
+                        reward_shaping=reward_shaping,
                         **kwargs)
 
         env = GymWrapper(env, flatten_obs=False)
         env = RobosuiteImageWrapper(env)
+
+        if physics_type == "LowFriction":  
+            if env_name == "Lift":
+                env = modify_suite_cube_physics(env, mass=2, friction=[.005, .0001, .00001])
+            elif env_name == "Slide":
+                env = modify_suite_slide_physics(env, cube_mass=2.0, cube_friction=[0.005, 0.0001, 0.00001], table_friction=[0.1, 0.0001, 0.00001]) 
+        elif physics_type == "HighFriction":
+            if env_name == "Door":
+                env = modify_suite_door_physics(env, door_mass=12.0, hinge_friction=15.0, hinge_damping=8.0, hinge_stiffness=3.0)
+            elif env_name == "Slide":
+                env = modify_suite_slide_physics(env, cube_mass=0.01, cube_friction=[10.0, 5e-2, 1e-3], table_friction=[5.0, 0.01, 0.001]) 
+
+        print(f"Made env with name: {env_name}, robots: {robots}, reward_shaping: {reward_shaping}, physics_type: {physics_type}")
     else:
-        render_mode = "rgb_array" if eval_mode else None
+        render_mode = "rgb_array" if render else None
         env = gym.make(env_id, render_mode=render_mode, **kwargs)
 
     return env
@@ -90,6 +137,7 @@ class VideoCallback(BaseCallback):
         verbose: int = 0,
         deterministic: bool = True,
         flip_vertical: bool = False,
+        max_steps_per_episode: int = 1000,
     ):
         super().__init__(verbose=verbose)
         self.eval_env = eval_env
@@ -99,6 +147,8 @@ class VideoCallback(BaseCallback):
         self.episode_count = 0
         self.deterministic = deterministic
         self.flip_vertical = flip_vertical
+        self.max_steps_per_episode = max_steps_per_episode
+        
     def _init_callback(self) -> None:
         # Create folder if needed
         if self.video_folder is not None:
@@ -118,9 +168,10 @@ class VideoCallback(BaseCallback):
         obs, _ = self.eval_env.reset()
         frames = []
         done = False
-        
+        num_steps = 0
+
         # Record episode
-        while not done:
+        while not done and num_steps < self.max_steps_per_episode:
             # Get action from model
             action, _ = self.model.predict(obs, deterministic=self.deterministic)
             
@@ -135,7 +186,7 @@ class VideoCallback(BaseCallback):
             # Step environment
             obs, _, done, truncated, _ = self.eval_env.step(action)
             done = done or truncated
-        
+            num_steps += 1
         # Save video
         if frames:
             video_path = os.path.join(
@@ -323,6 +374,16 @@ def get_state_from_obs_fetch(obs: dict, _info: dict) -> np.ndarray:
     return full_obs
 
 
+def get_state_from_obs_door(obs: dict, _info: dict) -> np.ndarray:
+    """
+    Get state from observation array for door environment.
+    """
+    proprio_array = obs['robot0_proprio-state']
+    object_state_array = obs['object-state']
+    full_obs = np.concatenate([proprio_array, object_state_array], axis=-1)
+    
+    return full_obs
+
 def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
     """
     Get state from observation array for environment.
@@ -335,6 +396,8 @@ def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
         return get_state_from_obs_ant(obs, info)
     elif "Fetch" in env_id:
         return get_state_from_obs_fetch(obs, info)
+    elif "Robosuite" in env_id and "Door" in env_id:
+        return get_state_from_obs_door(obs, info)
     else:
         raise ValueError(f"Environment {env_id} not supported for state getting - implement get_state_from_obs for this environment")
 

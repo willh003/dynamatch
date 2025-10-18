@@ -1,0 +1,11 @@
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
+name: door_flow_id
+action_dim: 7
+obs_dim: 57
+
+diffusion_step_embed_dim: 64
+down_dims: [64, 128, 256]
+num_inference_steps: 10
+
+checkpoint_path: null
+

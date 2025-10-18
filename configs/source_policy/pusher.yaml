@@ -1,0 +1,8 @@
+_target_: stable_baselines3.PPO
+policy:
+  _target_: stable_baselines3.common.policies.MlpPolicy
+  net_arch: [64, 64]
+  activation_fn: nn.ReLU
+  ortho_init: False
+
+checkpoint_path: /home/wph52/weird/dynamics/rl/runs/Pusher-v5_20251014_143852/models/best_model.zip

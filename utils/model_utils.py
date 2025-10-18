@@ -142,8 +142,20 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
     if checkpoint_path is None:
         raise ValueError("Base policy checkpoint path must be provided either in config or as argument")
     
+    # Get the model class from _target_
+    if '_target_' not in config['source_policy']:
+        raise ValueError("Source policy config must specify '_target_' class path")
+    
+    target_path = config['source_policy']['_target_']
+    
+    # Import the model class
+    try:
+        model_class = get_class(target_path)
+    except Exception as e:
+        raise ImportError(f"Failed to resolve target '{target_path}': {e}")
+    
     # Load the base policy from checkpoint
-    source_policy = PPO.load(checkpoint_path)
+    source_policy = model_class.load(checkpoint_path)
     
     # Create action translator using the same approach as build_action_translator_from_config
     action_translator_config = config['action_translator'].copy()
@@ -196,7 +208,19 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     if source_checkpoint_path is None:
         raise ValueError("Source policy checkpoint path must be provided")
     
-    source_policy = PPO.load(source_checkpoint_path)
+    # Get the model class from _target_
+    if '_target_' not in source_policy_config:
+        raise ValueError("Source policy config must specify '_target_' class path")
+    
+    target_path = source_policy_config['_target_']
+    
+    # Import the model class
+    try:
+        model_class = get_class(target_path)
+    except Exception as e:
+        raise ImportError(f"Failed to resolve target '{target_path}': {e}")
+    
+    source_policy = model_class.load(source_checkpoint_path)
     
     # Load action translator config
     action_translator_name = config['defaults'][1]['action_translator']
@@ -230,19 +254,22 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     return combined_policy
 
 
-def load_source_policy_from_config(config_path, source_policy_checkpoint=None):
+def load_source_policy_from_config(config: str | dict, source_policy_checkpoint=None):
     """
     Load a source policy from a config file.
     
     Args:
-        config_path: Path to the source policy config YAML file
+        config: Config for the source policy (either path to config file or dict)
         source_policy_checkpoint: Override path to source policy checkpoint
     
     Returns:
-        PPO policy instance
+        Loaded policy instance (PPO, SAC, etc.)
     """
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+
+    if isinstance(config, str):
+        with open(config, 'r') as f:
+            config = yaml.safe_load(f)
+    
     
     # Override checkpoint path if provided
     if source_policy_checkpoint:
@@ -253,8 +280,20 @@ def load_source_policy_from_config(config_path, source_policy_checkpoint=None):
     if checkpoint_path is None:
         raise ValueError("Source policy checkpoint path must be provided either in config or as argument")
     
-    # Load the source policy from checkpoint
-    source_policy = PPO.load(checkpoint_path)
+    # Get the model class from _target_
+    if '_target_' not in config:
+        raise ValueError("Config must specify '_target_' class path")
+    
+    target_path = config['_target_']
+    
+    # Import the model class
+    try:
+        model_class = get_class(target_path)
+    except Exception as e:
+        raise ImportError(f"Failed to resolve target '{target_path}': {e}")
+    
+    # Load the source policy from checkpoint using the appropriate class
+    source_policy = model_class.load(checkpoint_path)
     
     return source_policy
 

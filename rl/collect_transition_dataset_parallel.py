@@ -4,8 +4,7 @@ import yaml
 from typing import Dict, Any, Optional
 import numpy as np
 import gymnasium as gym
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv
+
 from cluster_utils import set_cluster_graphics_vars
 import sys
 import matplotlib.pyplot as plt
@@ -19,27 +18,58 @@ from envs.env_utils import get_state_from_obs
 import gymnasium as gym
 from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
+from envs.env_utils import make_vec_env
+from utils.model_utils import load_source_policy_from_config
 register_custom_envs()
 
-def make_env(env_id: str, env_kwargs: Dict[str, Any], seed: Optional[int] = None):
+
+def resolve_hydra_config_and_get_source_policy_config(config_path, source_policy_checkpoint=None):
     """
-    Create a single environment for vectorized environment.
+    Resolve a Hydra config and return the complete source policy config.
+    Reused from eval_policy.py to maintain consistency.
+    
+    Returns:
+        dict: Complete source policy configuration including _target_, checkpoint_path, etc.
     """
-    def _init():
-        # Register custom environments in each subprocess
-        register_custom_envs()
-        env = gym.make(env_id, **env_kwargs)
-        if seed is not None:
-            env.reset(seed=seed)
-        return env
-    return _init
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        
+        # Get the config directory to resolve relative paths
+        config_dir = os.path.dirname(config_path)
+        
+        # Load source policy config
+        source_policy_name = config['defaults'][0]['source_policy']
+        # Navigate up to the configs directory, then to source_policy
+        base_policy_config_path = os.path.join(config_dir, '..', '..', 'source_policy', f'{source_policy_name}.yaml')
+        base_policy_config_path = os.path.normpath(base_policy_config_path)
+        
+        with open(base_policy_config_path, 'r', encoding='utf-8') as f:
+            base_policy_config = yaml.safe_load(f)
+        
+        # Override checkpoint path if provided
+        if source_policy_checkpoint:
+            base_policy_config['checkpoint_path'] = source_policy_checkpoint
+            
+        return base_policy_config
+            
+    except Exception as e:
+        print(f"Warning: Could not resolve Hydra config: {e}")
+        # Fallback to basic config if resolution fails
+        if source_policy_checkpoint:
+            return {
+                'checkpoint_path': source_policy_checkpoint,
+                '_target_': 'stable_baselines3.PPO',
+            }
+        else:
+            raise ValueError(f"Could not resolve source policy config: {e}")
 
 
 def get_state_from_vec_env(obs, infos, env_id: str) -> np.ndarray:
     """
     Get state from vectorized environment.
     """
-    if type(obs) == dict:
+    if isinstance(obs, dict):
         return get_state_from_obs(obs, infos, env_id)
     
     n_envs = len(obs)
@@ -50,7 +80,7 @@ def get_state_from_vec_env(obs, infos, env_id: str) -> np.ndarray:
     return np.array(states)
 
 def collect_transitions_parallel(
-    model_path: str,
+    source_policy_config: Dict[str, Any],
     env_id: str,
     env_kwargs: Dict[str, Any] = None,
     num_transitions: int = 10000,
@@ -64,7 +94,7 @@ def collect_transitions_parallel(
     Collect transitions (s, a, s') in parallel using vectorized environments.
     
     Args:
-        model_path: Path to the trained model .zip file
+        source_policy_config: Config for the source policy
         env_id: Gymnasium environment ID
         env_kwargs: Additional environment arguments
         num_transitions: Number of transitions to collect
@@ -80,11 +110,13 @@ def collect_transitions_parallel(
         env_kwargs = {}
     
     # Load the trained model
-    model = PPO.load(model_path)
-    physics_env = gym.make(env_id)
+    model = load_source_policy_from_config(source_policy_config)
+
+    if validate_physics_id:
+        physics_env = gym.make(env_id)
     
     # Create vectorized environment
-    vec_env = SubprocVecEnv([make_env(env_id, env_kwargs, seed) for _ in range(n_envs)])
+    vec_env = make_vec_env(env_id, n_envs=n_envs, **env_kwargs)
     
     all_states = []
     all_next_states = []
@@ -96,8 +128,7 @@ def collect_transitions_parallel(
     obs = vec_env.reset()
     infos = vec_env.reset_infos
 
-    episode_steps = [0] * n_envs
-    episode_dones = [False] * n_envs
+    episode_steps = np.zeros(n_envs)
     
     # Collect transitions in parallel
     with tqdm(total=num_transitions, desc="Collecting transitions") as pbar:
@@ -107,6 +138,7 @@ def collect_transitions_parallel(
             
             states = get_state_from_vec_env(obs, infos, env_id)
             next_states = get_state_from_vec_env(next_obs, next_infos, env_id)
+            episode_steps += 1
 
             for env_idx in range(n_envs):
 
@@ -127,8 +159,15 @@ def collect_transitions_parallel(
                     else:
                         all_gt_id_errors.append(0.0)
                         
-                    
                     pbar.update(1)
+                else:
+                    episode_steps[env_idx] = 0
+
+            if any(episode_steps >= max_steps_per_episode):
+                # If any reach max steps, reset all environments
+                next_obs = vec_env.reset()
+                next_infos = vec_env.reset_infos
+                episode_steps = np.zeros(n_envs)
 
             obs = next_obs
             infos = next_infos
@@ -184,7 +223,6 @@ def save_transitions_to_zarr(
         
         # Get existing data
         data_group = store['data']
-        meta_group = store['meta']
         
         # Get existing data and append
         existing_states = data_group['state'][:]
@@ -206,7 +244,7 @@ def save_transitions_to_zarr(
         data_group['next_state'][:] = combined_next_states
         
         # Update metadata
-        meta_group['num_samples'][:] = [len(combined_states)]
+        store['meta']['num_samples'][:] = [len(combined_states)]
         
         print(f"Appended {len(states)} new transitions to existing file")
         print(f"Total transitions: {len(combined_states)}")
@@ -307,7 +345,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
         config = yaml.safe_load(f)
     
     env_id = config['env_id']
-    model_path = config['model_path']
+    
     env_kwargs = config.get('env_kwargs', None)
     max_steps_per_episode = config.get('max_steps_per_episode', 1000)
     num_transitions = config.get('num_episodes', 1000) * max_steps_per_episode
@@ -321,9 +359,25 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
     
     # Collect transitions in parallel
     print(f"Collecting {num_transitions} transitions using {n_envs} parallel environments...")
-
+    
+    # Resolve source policy config using the same logic as eval_policy.py
+    if 'defaults' in config and config['defaults']:
+        # Hydra-style config with defaults
+        source_policy_config = resolve_hydra_config_and_get_source_policy_config(config_path)
+    elif 'source_policy' in config:
+        # Direct source policy config
+        source_policy_config = config['source_policy']
+    elif 'model_path' in config:
+        # Legacy model_path format
+        source_policy_config = {
+            'checkpoint_path': config['model_path'],
+            '_target_': 'stable_baselines3.PPO',
+        }
+    else:
+        raise ValueError("No valid source policy configuration found in config. Expected 'defaults', 'source_policy', or 'model_path'")
+    
     states, actions, next_states, all_rewards, all_gt_id_errors = collect_transitions_parallel(
-        model_path=model_path,
+        source_policy_config=source_policy_config,
         env_id=env_id,
         env_kwargs=env_kwargs,
         num_transitions=num_transitions,

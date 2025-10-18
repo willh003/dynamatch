@@ -27,7 +27,7 @@ def test_policy():
             verbose=1,
         )
 
-    eval_env = make_env("Robosuite-Lift-Panda", eval_mode=True)
+    eval_env = make_env("Robosuite-Lift-Panda", render=True)
   
 
     video_callback = VideoCallback(eval_env,

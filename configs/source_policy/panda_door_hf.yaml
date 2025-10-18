@@ -1,0 +1,5 @@
+_target_: stable_baselines3.SAC
+policy:
+  _target_: stable_baselines3.common.policies.MultiInputPolicy
+
+checkpoint_path: /home/wph52/weird/dynamics/rl/runs/Robosuite-HighFriction-Door-Panda_20251017_145340/models/best_model.zip

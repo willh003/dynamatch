@@ -13,19 +13,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 from envs.register_envs import register_custom_envs
 from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config
 from utils.eval_utils import bootstrap_iqm_ci
-from envs.env_utils import get_state_from_obs
+from envs.env_utils import get_state_from_obs, make_vec_env
 
 
-
-def make_env(env_id: str, env_kwargs: dict, seed: int = None):
-    """Create a single environment for vectorized environment."""
-    def _init():
-        register_custom_envs()
-        env = gym.make(env_id, **env_kwargs)
-        if seed is not None:
-            env.reset(seed=seed)
-        return env
-    return _init
 
 
 def get_state_from_vec_env(obs, infos, env_id: str) -> np.ndarray:
@@ -48,6 +38,7 @@ def evaluate_policy_parallel(
     deterministic: bool = True,
     n_envs: int = 4,
     seed: int = None,
+    max_steps_per_episode: int = 1000,
     is_action_translator: bool = False,
 ) -> tuple[float, float, float, float, float, float]:
     """
@@ -70,7 +61,7 @@ def evaluate_policy_parallel(
         env_kwargs = {}
     
     # Create vectorized environment
-    vec_env = SubprocVecEnv([make_env(env_id, env_kwargs, seed) for _ in range(n_envs)])
+    vec_env = make_vec_env(env_id, n_envs=n_envs, **env_kwargs)
     
     episode_rewards = []
     episode_lengths = []
@@ -119,7 +110,7 @@ def evaluate_policy_parallel(
                     initial_x_positions[env_idx] = x_pos
                 
                 # Check if episode is done
-                if dones[env_idx] and not episode_dones[env_idx]:
+                if dones[env_idx] and not episode_dones[env_idx] or episode_steps[env_idx] >= max_steps_per_episode:
                     episode_rewards.append(current_rewards[env_idx])
                     episode_lengths.append(episode_steps[env_idx])
                     
@@ -165,6 +156,7 @@ def evaluate_and_record_parallel(
     n_eval_episodes: int = 10,
     deterministic: bool = True,
     seed: int = None,
+    max_steps_per_episode: int = 1000,
     n_envs: int = 4,
 ):
     """
@@ -218,6 +210,7 @@ def evaluate_and_record_parallel(
     reward_iqm, reward_lower_ci, reward_upper_ci, x_displacement_iqm, x_displacement_lower_ci, x_displacement_upper_ci = evaluate_policy_parallel(
         model=model,
         env_id=env_id,
+        max_steps_per_episode=max_steps_per_episode,
         env_kwargs=env_kwargs,
         n_eval_episodes=n_eval_episodes,
         deterministic=deterministic,
@@ -247,6 +240,7 @@ def parse_args():
     parser.add_argument("--deterministic", action="store_true", default=True, help="Use deterministic actions")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
     parser.add_argument("--n_envs", type=int, default=16, help="Number of parallel environments")
+    parser.add_argument("--max_steps_per_episode", type=int, default=1000, help="Max steps per episode")
     
     # ActionTranslator specific arguments
     parser.add_argument("--source_policy_checkpoint", help="Path to base policy checkpoint")
@@ -266,6 +260,7 @@ if __name__ == "__main__":
         source_policy_checkpoint=args.source_policy_checkpoint,
         action_translator_checkpoint=args.action_translator_checkpoint,
         env_id=args.env_id,
+        max_steps_per_episode=args.max_steps_per_episode,
         n_eval_episodes=args.episodes,
         deterministic=args.deterministic,
         seed=args.seed,

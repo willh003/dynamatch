@@ -22,10 +22,20 @@ from .custom_fetch import (
     make_fetch_reach_modified_physics_sparse
 )
 
+from .custom_pusher import (
+    make_pusher_mod_physics
+)
+
 from .custom_shadow import (
     make_shadow_obs,
     make_shadow_actuator_friction
 )
+
+from .robosuite_slide import (
+    Slide
+)
+from robosuite.environments.base import register_env as register_env_robosuite
+
 
 import gymnasium_robotics
 import gymnasium as gym
@@ -100,6 +110,10 @@ def register_custom_envs():
             "FetchReachModifiedPhysicsSparse-v4",
             make_fetch_reach_modified_physics_sparse
         ),
+        (
+            "PusherModPhysics-v5",
+            make_pusher_mod_physics
+        )
     ]
 
     for env_id, entry_point in env_specs:
@@ -107,3 +121,4 @@ def register_custom_envs():
             register(id=env_id, entry_point=entry_point)
 
 
+    register_env_robosuite(Slide)

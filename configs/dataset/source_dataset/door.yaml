@@ -1,0 +1,23 @@
+_target_: null
+name: ant_original_5m_large
+
+# Dataset collection parameters
+# model_path: /home/wph52/weird/dynamics/rl/runs/Robosuite-Door-Panda_20251016_190434/models/best_model.zip
+defaults:
+  - source_policy: panda_door
+
+env_id: Robosuite-Door-Panda
+buffer_dir: /home/wph52/weird/dynamics/datasets/door/transitions/door
+env_kwargs: null
+num_episodes: 1000
+max_steps_per_episode: 50
+deterministic: false
+seed: null
+append: false
+
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: True
+normalize_lowdim: True
+val_ratio: 0.20
