@@ -1,0 +1,10 @@
+defaults:
+  - source_policy: panda_door
+  #- action_translator: door_bc_modphys
+  #- action_translator: door_flow_og_modphys_delta
+  - action_translator: door_flow_og_modphys_prior
+  #- action_translator: door_flow_og_modphys_cond
+  #- action_translator: door_flow_og_modphys
+
+_target_: generative_policies.action_translation.ActionTranslatorPolicy
+

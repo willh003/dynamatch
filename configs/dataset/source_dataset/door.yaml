@@ -1,5 +1,5 @@
 _target_: null
-name: ant_original_5m_large
+name: robosuite_door_yaml
 
 # Dataset collection parameters
 # model_path: /home/wph52/weird/dynamics/rl/runs/Robosuite-Door-Panda_20251016_190434/models/best_model.zip

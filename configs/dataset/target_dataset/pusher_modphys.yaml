@@ -1,0 +1,21 @@
+_target_: null
+name: pusher_modphys
+
+defaults:
+  - source_policy: pusher_modphysics
+
+env_id: PusherModPhysics-v5
+buffer_dir: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher_modphys
+env_kwargs: null
+num_episodes: 100
+max_steps_per_episode: 100
+deterministic: false
+seed: null
+append: false
+
+
+seq_len: ${num_frames}
+history_len: ${obs_num_frames}
+normalize_action: True
+normalize_lowdim: True
+val_ratio: 0.20

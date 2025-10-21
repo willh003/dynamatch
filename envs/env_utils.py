@@ -89,7 +89,11 @@ def make_env(env_id: str, render_mode: str = None, render: bool = False, **kwarg
         print(f"Made env with name: {env_name}, robots: {robots}, reward_shaping: {reward_shaping}, physics_type: {physics_type}")
     else:
         render_mode = "rgb_array" if render else None
+
+        if "Pusher" in env_id:
+            kwargs['max_episode_steps'] = 100
         env = gym.make(env_id, render_mode=render_mode, **kwargs)
+
 
     return env
 
@@ -148,6 +152,8 @@ class VideoCallback(BaseCallback):
         self.deterministic = deterministic
         self.flip_vertical = flip_vertical
         self.max_steps_per_episode = max_steps_per_episode
+
+        self.env_id = eval_env.spec.id if eval_env.spec is not None else eval_env.name
         
     def _init_callback(self) -> None:
         # Create folder if needed
@@ -165,7 +171,9 @@ class VideoCallback(BaseCallback):
             print(f"Recording video episode {self.episode_count}...")
         
         # Reset environment
-        obs, _ = self.eval_env.reset()
+        obs, info = self.eval_env.reset()
+
+        state = get_state_from_obs(obs, info, self.env_id)
         frames = []
         done = False
         num_steps = 0
@@ -173,7 +181,14 @@ class VideoCallback(BaseCallback):
         # Record episode
         while not done and num_steps < self.max_steps_per_episode:
             # Get action from model
-            action, _ = self.model.predict(obs, deterministic=self.deterministic)
+            if hasattr(self.model, 'predict_base_and_translated'):
+                # action translator
+                action, _ = self.model.predict_base_and_translated(policy_observation=obs, translator_observation=state, deterministic=self.deterministic)
+                
+                action = action[0]
+            else:
+                # regular sb3 model
+                action, _ = self.model.predict(obs, deterministic=self.deterministic)
             
             # Render and store frame
             frame = self.eval_env.render()
@@ -184,7 +199,8 @@ class VideoCallback(BaseCallback):
                 frames.append(frame)
             
             # Step environment
-            obs, _, done, truncated, _ = self.eval_env.step(action)
+            obs, _, done, truncated, info = self.eval_env.step(action)
+            state = get_state_from_obs(obs, info, self.env_id)
             done = done or truncated
             num_steps += 1
         # Save video
@@ -384,6 +400,13 @@ def get_state_from_obs_door(obs: dict, _info: dict) -> np.ndarray:
     
     return full_obs
 
+def get_state_from_obs_pusher(obs: dict, _info: dict) -> np.ndarray:
+    """
+    Get state from observation array for pusher environment.
+    """
+    
+    return obs
+
 def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
     """
     Get state from observation array for environment.
@@ -396,9 +419,30 @@ def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
         return get_state_from_obs_ant(obs, info)
     elif "Fetch" in env_id:
         return get_state_from_obs_fetch(obs, info)
-    elif "Robosuite" in env_id and "Door" in env_id:
+    elif "Door" in env_id:
         return get_state_from_obs_door(obs, info)
+    elif "Pusher" in env_id:
+        return get_state_from_obs_pusher(obs, info)
     else:
         raise ValueError(f"Environment {env_id} not supported for state getting - implement get_state_from_obs for this environment")
 
 
+def get_reward_from_obs_pusher(reward, info) -> float:
+    """
+    Get reward from observation array for pusher environment.
+    """
+    if isinstance(info, dict):
+        reward = info['reward_dist']
+    else: 
+        reward = [i['reward_dist'] for i in info]
+    return reward
+
+
+def get_reward_from_obs(reward: float, info:dict, env_id: str) -> float:
+    """
+    Get reward from observation array for environment.
+    """
+    if "Pusher" in env_id:
+        return get_reward_from_obs_pusher(reward, info)
+    else:
+        return reward

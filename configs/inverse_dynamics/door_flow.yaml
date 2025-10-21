@@ -7,5 +7,5 @@ diffusion_step_embed_dim: 64
 down_dims: [64, 128, 256]
 num_inference_steps: 10
 
-checkpoint_path: null
+checkpoint_path: /home/wph52/weird/dynamics/datasets/door/transitions/door/id_door_flow_id_20251018_141254.pth
 

@@ -24,7 +24,7 @@ import imageio.v2 as imageio
 from tqdm import tqdm
 from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config, print_model_info
 from omegaconf import OmegaConf
-from envs.env_utils import get_state_from_obs, VideoCallback, make_env
+from envs.env_utils import get_state_from_obs, VideoCallback, make_env, get_reward_from_obs
 
 
 
@@ -196,6 +196,7 @@ def get_ant_ankle_force(qfrc, xmat, model) -> np.ndarray:
 def evaluate_policy(
     model: "type_aliases.PolicyPredictor",
     env: Union[gym.Env, VecEnv],
+    env_id: str,
     n_eval_episodes: int = 10,
     deterministic: bool = True,
     render: bool = False,
@@ -253,6 +254,9 @@ def evaluate_policy(
         n_envs = 1
     episode_rewards = []
     episode_lengths = []
+    action_differences = []
+    all_actions = []
+    all_base_actions = []
 
     episode_count = 0
     current_rewards = np.zeros(n_envs)
@@ -262,9 +266,12 @@ def evaluate_policy(
         while episode_count < n_eval_episodes:
             if is_action_translator:
                 # ActionTranslator returns (action, state) tuple
-                full_observation = get_state_from_obs(observation, info, env.spec.id)
+                full_observation = get_state_from_obs(observation, info, env_id)
 
                 actions, base_action = model.predict_base_and_translated(policy_observation=observation, translator_observation=full_observation, deterministic=deterministic)
+
+                all_actions.append(actions)
+                all_base_actions.append(base_action)
             else:
                 # Regular PPO model
                 actions, _ = model.predict(observation=observation, deterministic=deterministic)
@@ -310,6 +317,16 @@ def evaluate_policy(
 
             if render:
                 env.render()
+
+    all_actions = np.array(all_actions)
+    all_base_actions = np.array(all_base_actions)
+    for i in range(all_actions.shape[1]):
+        plt.hist(all_actions[:, i], bins=50, alpha=0.5, label="translated actions")
+        plt.hist(all_base_actions[:, i], bins=50, alpha=0.5, label="base actions")
+        plt.legend()
+        plt.xlim(-.1, .1)
+        plt.savefig(f"actions_dim_{i}.png")
+        plt.close()
 
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
@@ -795,6 +812,7 @@ def evaluate_and_record(
         video_dir = os.path.join("videos", "eval", f"{env_id}-{run_stamp}")
 
     os.makedirs(video_dir, exist_ok=True)
+    print("Logging videos to: ", video_dir)
 
 
     
@@ -835,9 +853,10 @@ def evaluate_and_record(
         eval_freq=1,
         name_prefix="evaluation",
         max_steps_per_episode=max_steps_per_episode,
-        deterministic=True,
+        deterministic=deterministic,
         flip_vertical="robosuite" in env_id.lower()
     )
+    model.num_timesteps = 0 # hack to work with video callback
     video_callback.init_callback(model)
     
     video_callback.on_step()
@@ -847,6 +866,7 @@ def evaluate_and_record(
     mean_reward, std_reward = evaluate_policy(
         model,
         eval_env,
+        env_id,
         n_eval_episodes=num_episodes,
         deterministic=deterministic,
         render=False,
@@ -917,6 +937,8 @@ def evaluate_and_record(
 
             obs, reward, terminated, truncated, info = video_env.step(action_to_step)
 
+            reward = get_reward_from_obs(obs, info, env_id)
+
             # save the actuator forces, constraint forces, and xmat (body rotation matrix)   
             all_mj_actuator.append(video_env.unwrapped.data.qfrc_actuator.copy())
             all_mj_constraint.append(video_env.unwrapped.data.qfrc_constraint.copy())
@@ -931,7 +953,7 @@ def evaluate_and_record(
                 z_pos = obs[0] if len(obs) > 0 else 0.0  # z coordinate from first observation
                 episode_positions.append((x_pos, z_pos))
             
-            if terminated or truncated:
+            if terminated or truncated:                
                 break
         # Calculate final x position displacement for ant environments
         final_x_displacement = 0.0

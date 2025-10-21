@@ -13,7 +13,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 from envs.register_envs import register_custom_envs
 from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config
 from utils.eval_utils import bootstrap_iqm_ci
-from envs.env_utils import get_state_from_obs, make_vec_env
+from envs.env_utils import get_state_from_obs, make_vec_env, get_reward_from_obs
 
 
 
@@ -22,6 +22,9 @@ def get_state_from_vec_env(obs, infos, env_id: str) -> np.ndarray:
     """
     Get state from vectorized environment.
     """
+    if isinstance(obs, dict):
+        return get_state_from_obs(obs, infos, env_id)
+    
     n_envs = len(obs)
 
     states = []
@@ -98,7 +101,7 @@ def evaluate_policy_parallel(
             
             # Step all environments
             next_obs, rewards, dones, infos = vec_env.step(actions)
-            
+            rewards = get_reward_from_obs(next_obs, infos, env_id)
             # Update episode tracking
             for env_idx in range(n_envs):
                 current_rewards[env_idx] += rewards[env_idx]

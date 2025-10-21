@@ -1,0 +1,12 @@
+_target_: null
+name: pusher
+
+# Dataset collection parameters
+# model_path: /home/wph52/weird/dynamics/rl/runs/Robosuite-Door-Panda_20251016_190434/models/best_model.zip
+defaults:
+  - source_policy: pusher
+
+env_id: Pusher-v5
+buffer_dir: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher
+num_episodes: 1000
+max_steps_per_episode: 100

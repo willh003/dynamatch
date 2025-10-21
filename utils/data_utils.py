@@ -45,7 +45,8 @@ def get_relabeled_actions_path_from_config(config_path):
         dataset_config = yaml.safe_load(f)
 
     buffer_dir = dataset_config['buffer_dir']
-    output_dir = buffer_dir.replace('/sequence/', '/relabeled_actions/')
+    output_dir = buffer_dir.replace('/sequence/', '/relabeled_actions/').replace('/transitions/', '/relabeled_actions/')
+
     
     buffer_path = os.path.join(output_dir,  'buffer.zarr')
     

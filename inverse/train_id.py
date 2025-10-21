@@ -46,7 +46,9 @@ def train_inverse_dynamics(states, actions, next_states, model,
     # Use the same environment that was used for data collection
     if env_id is None:
         env_id = "InvertedPendulumIntegrable-v5"  # fallback for backward compatibility
-    physics_env = gym.make(env_id)
+    
+    if validate_physics_id:
+        physics_env = gym.make(env_id)
 
     # Convert to tensors
     states_tensor = torch.FloatTensor(states)
@@ -118,7 +120,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
             batch_states = batch_states.to(device)
             batch_actions = batch_actions.to(device)
             batch_next_states = batch_next_states.to(device)
-            
+
             optimizer.zero_grad()
             
             # Forward pass: compute loss for inverse dynamics p(a | s, s')

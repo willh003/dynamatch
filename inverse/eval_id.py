@@ -13,12 +13,13 @@ from pathlib import Path
 
 from cluster_utils import set_cluster_graphics_vars
 
+
 # Add parent directories to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import load_source_policy_from_config, load_inverse_dynamics_model_from_config
 from physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
-from envs.env_utils import get_state_from_obs
+from envs.env_utils import get_state_from_obs, make_env, VideoCallback
 
 
 def rollout_policy(env, policy, deterministic=False, max_steps=1000):
@@ -245,40 +246,26 @@ def record_trajectory_video(env_id, trajectory, policy, output_dir, deterministi
     print("Recording trajectory video...")
     
     # Create video environment with RGB rendering
-    video_env = gym.make(env_id, render_mode="rgb_array")
-    video_env = Monitor(video_env)
+    video_env = make_env(env_id, render=True)
+    
     
     # Record video
     video_path = os.path.join(output_dir, "trajectory_video")
-    video_env = RecordVideo(
-        video_env,
+    
+    video_callback = VideoCallback(video_env,
         video_folder=video_path,
-        episode_trigger=lambda ep_id: ep_id == 0,  # Record only the first episode
+        eval_freq=1,
         name_prefix="trajectory",
-        disable_logger=True,
+        max_steps_per_episode=1000,
+        deterministic=True,
+        flip_vertical="robosuite" in env_id.lower()
     )
+    policy.num_timesteps = 0 # hack to work with video callback
+    video_callback.init_callback(policy)
     
-    # Reset environment
-    obs, info = video_env.reset()
-    
-    # Step through the trajectory
-    for i, action in enumerate(trajectory['actions']):
-        # Use the policy to get action (in case we want to use learned actions instead)
-        if hasattr(policy, 'predict'):
-            policy_action, _ = policy.predict(obs, deterministic=deterministic)
-            # Use the original action from trajectory for consistency
-            action_to_step = action
-        else:
-            action_to_step = action
-            
-        # Ensure action is the right shape
-        if len(action_to_step.shape) > 1:
-            action_to_step = action_to_step[0]
-            
-        obs, reward, terminated, truncated, info = video_env.step(action_to_step)
-        
-        if terminated or truncated:
-            break
+    video_callback.on_step()
+    video_callback.on_step()
+    video_callback.on_step()
     
     video_env.close()
     
@@ -348,8 +335,8 @@ def main():
     
     # Create environments
     print("Creating environments...")
-    rollout_env = gym.make(args.env_id)
-    physics_env = gym.make(args.env_id)  # Separate env for physics ID
+    rollout_env = make_env(args.env_id)
+    physics_env = make_env(args.env_id)  # Separate env for physics ID
     
     # Rollout policy
     trajectory = rollout_policy(rollout_env, policy, deterministic=args.deterministic, max_steps=args.max_steps)

@@ -1,7 +1,7 @@
 import gymnasium as gym
 import mujoco
 
-from .env_transforms import IntegrableEnvWrapper, ActionAddWrapper, MLPActionWrapper
+from .env_transforms import IntegrableEnvWrapper, ActionAddWrapper, MLPActionWrapper, ModifyPhysicsWrapper
 
 def make_inverted_pendulum_integrable(**kwargs):
     """Factory for the integrable InvertedPendulum.
@@ -26,6 +26,12 @@ def make_inverted_pendulum_dynamics_shift(action_add=.5, **kwargs):
     base_env = gym.make("InvertedPendulum-v5", **kwargs)
     return ActionAddWrapper(base_env, action_add=action_add)
 
+def make_inverted_pendulum_modified_physics(**kwargs):
+    """Factory for the modified physics InvertedPendulum.
+    """
+    base_env = gym.make("InvertedPendulum-v5", **kwargs)
+    
+    return ModifyPhysicsWrapper(base_env, friction_mult=1.5, mass_mult=5.0, gear_mult=0.5, damping_mult=10.0)
 
 def make_inverted_pendulum_integrable_mlp_shift(save_weights_path=None, **kwargs):
     """Factory for the dynamics-shifted InvertedPendulum.

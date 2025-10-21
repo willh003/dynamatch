@@ -1,0 +1,15 @@
+_target_: null
+name: pendulum_integrable_dynamics_shift
+
+# Dataset collection parameters
+defaults:
+  - source_policy: pendulum_ppo_modphysics
+
+env_id: InvertedPendulumModPhysics-v5
+buffer_dir: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_modphys
+env_kwargs: null
+num_episodes: 10
+max_steps_per_episode: 1000
+deterministic: false
+seed: null
+append: false

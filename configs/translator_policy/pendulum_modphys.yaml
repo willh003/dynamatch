@@ -1,0 +1,6 @@
+defaults:
+ - source_policy: pendulum_ppo
+ - action_translator: pendulum_flow_modphys # action translator
+ #- action_translator: pendulum_bc_modphys # bc policy
+
+_target_: generative_policies.action_translation.ActionTranslatorPolicy

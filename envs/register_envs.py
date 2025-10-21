@@ -4,7 +4,8 @@ from .custom_pendulum import (
     make_inverted_pendulum_integrable, 
     make_inverted_pendulum_integrable_dynamics_shift,
     make_inverted_pendulum_integrable_mlp_shift,
-    make_inverted_pendulum_integrable_mlp_shift_state_conditional
+    make_inverted_pendulum_integrable_mlp_shift_state_conditional,
+    make_inverted_pendulum_modified_physics
 )
 
 from .custom_ant import (
@@ -67,6 +68,10 @@ def register_custom_envs():
         (
             "InvertedPendulumIntegrableMLPShiftStateConditional-v5",
             make_inverted_pendulum_integrable_mlp_shift_state_conditional
+        ),
+        (
+            "InvertedPendulumModPhysics-v5",
+            make_inverted_pendulum_modified_physics
         ),
         # Custom Ant environments with different contact parameters
         (
