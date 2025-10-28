@@ -24,7 +24,7 @@ import imageio.v2 as imageio
 from tqdm import tqdm
 from utils.model_utils import load_action_translator_policy_from_config, load_source_policy_from_config, print_model_info
 from omegaconf import OmegaConf
-from envs.env_utils import get_state_from_obs, VideoCallback, make_env, get_reward_from_obs
+from envs.env_utils import get_state_from_obs, VideoCallback, make_env, get_reward_from_obs, get_success_from_obs
 
 
 
@@ -206,10 +206,12 @@ def evaluate_policy(
     warn: bool = True,
     is_monitor_wrapped: bool = False,
     is_action_translator: bool = False,
+    addl_noise_std: float = 0.0,
 ) -> Union[tuple[float, float], tuple[list[float], list[int]]]:
     """
     Taken from stable_baselines3.common.evaluation.evaluate_policy, but modified for non-vectorized environments.
     Also works with the ActionTranslator model.
+    Also adds additional noise to the actions if addl_noise_std > 0.
     
     Runs the policy for ``n_eval_episodes`` episodes and outputs the average return
     per episode (sum of undiscounted rewards).
@@ -275,6 +277,9 @@ def evaluate_policy(
             else:
                 # Regular PPO model
                 actions, _ = model.predict(observation=observation, deterministic=deterministic)
+
+            if addl_noise_std > 0:
+                actions = np.random.normal(loc=0.0, scale=addl_noise_std, size=actions.shape)
 
             # Only support single env eval for now
             if len(actions.shape) > 1:
@@ -748,6 +753,7 @@ def evaluate_and_record(
     num_episodes: int = 5,
     max_steps_per_episode: int = 1000,
     deterministic: bool = True,
+    addl_noise_std: float = 0.0,
     seed: int | None = None,
     config: dict = None,
 ):
@@ -765,6 +771,7 @@ def evaluate_and_record(
         num_episodes: Number of episodes to record
         max_steps_per_episode: Maximum steps per episode
         deterministic: Whether to use deterministic actions
+        addl_noise_std: Standard deviation of additional noise to add to the actions (if 0, then no noise is added)
         seed: Random seed for environment resets
         config: Additional configuration dict
     """
@@ -844,6 +851,7 @@ def evaluate_and_record(
     eval_env = make_env(env_id, render=False, **env_kwargs)
     eval_env = Monitor(eval_env)
 
+    np.random.seed(seed)
 
     # Ensure we get rgb frames for video generation
     video_env = make_env(env_id, render=True, **env_kwargs)
@@ -854,7 +862,9 @@ def evaluate_and_record(
         name_prefix="evaluation",
         max_steps_per_episode=max_steps_per_episode,
         deterministic=deterministic,
-        flip_vertical="robosuite" in env_id.lower()
+        flip_vertical="robosuite" in env_id.lower(),
+        addl_noise_std=addl_noise_std,
+        seed=seed,
     )
     model.num_timesteps = 0 # hack to work with video callback
     video_callback.init_callback(model)
@@ -862,19 +872,8 @@ def evaluate_and_record(
     video_callback.on_step()
     video_callback.on_step()
     video_callback.on_step()
+    video_callback.on_step()
     
-    mean_reward, std_reward = evaluate_policy(
-        model,
-        eval_env,
-        env_id,
-        n_eval_episodes=num_episodes,
-        deterministic=deterministic,
-        render=False,
-        warn=False,
-        is_monitor_wrapped=True,
-        is_action_translator=is_action_translator
-    )
-
     # print(f"Mean reward: {mean_reward:.2f} +/- {std_reward:.2f} over {num_episodes} episodes")
 
     # Rollout episodes with video recording
@@ -887,14 +886,19 @@ def evaluate_and_record(
     all_episode_rewards = []  # Track rewards per episode
     all_episode_positions = []  # Track positions per episode (only for ant environments)
     is_ant_env = "ant" in env_id.lower()
+    success_count = 0
     
     # Track actions for first episode only
     first_episode_actions = []
     first_episode_translated_actions = []  # For action translators
     first_episode_tracked = False
+
     
-    for episode_idx in range(min(5, num_episodes)):
+    
+    for episode_idx in range(num_episodes):
+        ep_success = False
         obs, info = video_env.reset(seed=seed)
+        seed += 1
         episode_return = 0.0
         episode_rewards = []  # Track rewards for this episode
         episode_positions = [] if is_ant_env else None  # Track positions for this episode (only for ant environments)
@@ -937,7 +941,8 @@ def evaluate_and_record(
 
             obs, reward, terminated, truncated, info = video_env.step(action_to_step)
 
-            reward = get_reward_from_obs(obs, info, env_id)
+            reward = get_reward_from_obs(reward, obs, info, env_id)
+            ep_success = ep_success or get_success_from_obs(obs, info, env_id)
 
             # save the actuator forces, constraint forces, and xmat (body rotation matrix)   
             all_mj_actuator.append(video_env.unwrapped.data.qfrc_actuator.copy())
@@ -953,15 +958,19 @@ def evaluate_and_record(
                 z_pos = obs[0] if len(obs) > 0 else 0.0  # z coordinate from first observation
                 episode_positions.append((x_pos, z_pos))
             
-            if terminated or truncated:                
+            if terminated or truncated:     
+
                 break
+        if ep_success:
+            success_count += 1 
+            
         # Calculate final x position displacement for ant environments
         final_x_displacement = 0.0
         if is_ant_env and episode_positions is not None and len(episode_positions) > 0:
             final_x_displacement = episode_positions[-1][0]  # x coordinate of final position
             all_episode_positions.append(episode_positions)  # Store positions for this episode
         
-        print(f"Episode {episode_idx + 1}/{min(5, num_episodes)} return: {episode_return:.2f}, final x displacement: {final_x_displacement:.2f}")
+        print(f"Episode {episode_idx + 1}/{num_episodes} return: {episode_return:.2f}, final x displacement: {final_x_displacement:.2f}")
         all_returns.append(episode_return)
         all_episode_rewards.append(episode_rewards)  # Store rewards for this episode
         
@@ -972,6 +981,9 @@ def evaluate_and_record(
     # Plot results
     all_actions = np.array(all_actions)
     all_returns = np.array(all_returns)
+    
+    print(f"Mean return: {np.mean(all_returns):.2f} +/- {np.std(all_returns):.2f}")
+    print(f"Success rate: {success_count / num_episodes:.2f}")
 
     video_run_dir = video_dir
     
@@ -1099,7 +1111,7 @@ def evaluate_and_record(
             reader.close()
 
     print(f"Saved videos to: {video_run_dir}")
-    print(f"Mean return: {np.mean(all_returns):.2f} +/- {np.std(all_returns):.2f}")
+    
 
 
 def parse_args():
@@ -1115,7 +1127,8 @@ def parse_args():
     parser.add_argument("--episodes", type=int, default=8, help="Number of episodes to eval (max 5 video recorded)")
     parser.add_argument("--max_steps_per_episode", type=int, default=1000, help="Max steps per episode")
     parser.add_argument("--stochastic", action="store_true", default=False, help="Use stochastic actions instead of stochastic")
-    parser.add_argument("--seed", type=int, default=None, help="Optional seed for resets")
+    parser.add_argument("--seed", type=int, default=42, help="Optional seed for resets")
+    parser.add_argument("--addl_noise_std", type=float, default=0.0, help="Standard deviation of additional noise to add to the actions (if 0, then no noise is added)")
     
     # ActionTranslator specific arguments
     parser.add_argument("--source_policy_checkpoint", help="Path to base policy checkpoint (overrides config for ActionTranslator)")
@@ -1130,6 +1143,7 @@ if __name__ == "__main__":
     register_custom_envs()
 
     evaluate_and_record(
+        addl_noise_std=args.addl_noise_std,
         translator_policy_config_path=args.translator_policy_config,
         base_policy_config_path=args.base_policy_config,
         source_policy_checkpoint=args.source_policy_checkpoint,

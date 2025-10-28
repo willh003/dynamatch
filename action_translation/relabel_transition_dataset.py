@@ -63,38 +63,33 @@ def get_original_actions(train_set,
         shifted_action_np = shifted_action.numpy() if hasattr(shifted_action, 'numpy') else shifted_action
         
         # run inverse dynamics on (state, next_state) to obtain original action
-        try:
-            # Use the inverse dynamics model to predict the original action
-            original_action = inverse_dynamics_model.predict(
-                state_np.reshape(1, -1), 
+        # Use the inverse dynamics model to predict the original action
+        original_action = inverse_dynamics_model.predict(
+            state_np.reshape(1, -1), 
+            next_state_np.reshape(1, -1)
+        )
+        original_action = original_action[0]  # Remove batch dimension
+
+        if validate_physics:
+            physics_original_action = physics_inverse_dynamics_model.predict(
+                state_np.reshape(1, -1),
                 next_state_np.reshape(1, -1)
             )
-            original_action = original_action[0]  # Remove batch dimension
-
-            if validate_physics:
-                physics_original_action = physics_inverse_dynamics_model.predict(
-                    state_np.reshape(1, -1),
-                    next_state_np.reshape(1, -1)
-                )
-                physics_original_actions.append(physics_original_action[0])  # Remove batch
-                
-                if i < 3:
-                    print(f"Sample {i}:")
-                    print(f"  State: {state_np}")
-                    print(f"  Next state: {next_state_np}")
-                    print(f"  Action in dataset: {shifted_action_np}")
-                    print(f"  Original action prediction: {original_action}")
-                    print(f"  Physics original action: {physics_original_action}")
-                    
-            # Store the results
-            states.append(state_np)
-            next_states.append(next_state_np)
-            original_actions.append(original_action)
-            shifted_actions.append(shifted_action_np)
+            physics_original_actions.append(physics_original_action[0])  # Remove batch
             
-        except Exception as e:
-            print(f"Warning: Inverse dynamics failed for sample {i}: {e}")
-            continue
+            if i < 3:
+                print(f"Sample {i}:")
+                print(f"  State: {state_np}")
+                print(f"  Next state: {next_state_np}")
+                print(f"  Action in dataset: {shifted_action_np}")
+                print(f"  Original action prediction: {original_action}")
+                print(f"  Physics original action: {physics_original_action}")
+                
+        # Store the results
+        states.append(state_np)
+        next_states.append(next_state_np)
+        original_actions.append(original_action)
+        shifted_actions.append(shifted_action_np)
 
     if validate_physics:
         error = np.array(original_actions) - np.array(physics_original_actions)
@@ -136,6 +131,63 @@ def create_action_translation_dataset(states, original_actions, shifted_actions,
     print(f"Next state shape: {next_states.shape}")
     
     return output_path
+
+def plot_action_correlations(original_actions, shifted_actions, output_path=None):
+    """
+    for each action dimension, make a subplot with the original action vs shifted action
+    they have shape (n_samples, action_dim)
+    """
+    action_dim = original_actions.shape[1]
+    
+    # Create subplots - arrange in a grid
+    n_cols = min(3, action_dim)  # Max 3 columns
+    n_rows = (action_dim + n_cols - 1) // n_cols  # Ceiling division
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    
+    # Handle case where we have only one subplot
+    if action_dim == 1:
+        axes = [axes]
+    elif n_rows == 1:
+        axes = axes if n_cols > 1 else [axes]
+    else:
+        axes = axes.flatten()
+    
+    for i in range(action_dim):
+        ax = axes[i]
+        
+        # Create scatter plot
+        ax.scatter(original_actions[:, i], shifted_actions[:, i], alpha=0.6, s=1)
+        
+        # Add diagonal line for perfect correlation
+        min_val = min(original_actions[:, i].min(), shifted_actions[:, i].min())
+        max_val = max(original_actions[:, i].max(), shifted_actions[:, i].max())
+        ax.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8, label='Perfect correlation')
+        
+        # Calculate and display correlation coefficient
+        correlation = np.corrcoef(original_actions[:, i], shifted_actions[:, i])[0, 1]
+        ax.set_title(f'Action Dim {i}\nCorrelation: {correlation:.3f}')
+        ax.set_xlabel('Original Action')
+        ax.set_ylabel('Shifted Action')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Hide unused subplots
+    for i in range(action_dim, len(axes)):
+        axes[i].set_visible(False)
+    
+    plt.tight_layout()
+    
+    plot_dir = os.path.dirname(output_path)
+    os.makedirs(plot_dir, exist_ok=True)
+    
+    # Save the plot
+    plot_path = os.path.join(plot_dir, 'action_correlations.png')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"Action correlation plot saved to: {plot_path}")
+
+
+    plt.close()
 
 
 def plot_action_distributions(original_actions, shifted_actions, output_path):
@@ -261,18 +313,18 @@ def main():
     # Load dataset config
 
     dataset_config_path = args.dataset_config
-    dataset_config = load_yaml_config(dataset_config_path)
+    model_config = load_yaml_config(args.model_config)
     dataset_path = get_transition_path_from_dataset_config(dataset_config_path)
-    
-    
+    id_model_name = model_config['name']
+
     # Create output path
-    output_path = get_relabeled_actions_path_from_config(dataset_config_path)
+    output_path = get_relabeled_actions_path_from_config(dataset_config_path, id_model_name)
     print(f"Output path: {output_path}")
 
     # Set up inverse dynamics model
-    inverse_dynamics_model = None
-    if args.model_config is not None:        
-        inverse_dynamics_model = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=True)
+    inverse_dynamics_model = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=True)
+    state_indices = model_config.get('state_indices', None)
+    action_indices = model_config.get('action_indices', None)
 
     if args.validate_physics_id:
         inverse_dynamics_env_id = args.inverse_dynamics_env_id
@@ -282,8 +334,7 @@ def main():
         physics_inverse_dynamics_model = None
     
     # Load transition dataset
-    states, actions, next_states = load_transition_dataset(dataset_path)
-
+    states, actions, next_states = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
 
     states_tensor = torch.FloatTensor(states)
     actions_tensor = torch.FloatTensor(actions)
@@ -296,11 +347,11 @@ def main():
         train_set, inverse_dynamics_model, physics_inverse_dynamics_model, args.max_samples
     )
     
-    # Plot action distributions
-    plot_action_distributions(original_actions, shifted_actions, output_path)
-    
     # Create and save action translation dataset
     create_action_translation_dataset(states, original_actions, shifted_actions, next_states, output_path)
+    # Plot action distributions
+    plot_action_distributions(original_actions, shifted_actions, output_path)
+    plot_action_correlations(original_actions, shifted_actions, output_path)
     print("Action translation dataset creation completed successfully!")
 
 

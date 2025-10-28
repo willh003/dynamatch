@@ -1,0 +1,18 @@
+_target_: null
+name: pendulum_modphys_random
+
+# Dataset collection parameters
+defaults:
+  - source_policy: pendulum_ppo_modphysics
+
+env_id: InvertedPendulumModPhysics-v5
+buffer_dir: /home/wph52/weird/dynamics/datasets/pendulum/sequence/pendulum_modphys_random
+env_kwargs: null
+num_episodes: 100
+max_steps_per_episode: 100
+deterministic: false
+seed: null
+append: false
+addl_noise_std: 1.8
+
+

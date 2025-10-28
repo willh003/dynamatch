@@ -19,6 +19,23 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def transform_state_dict_keys(state_dict):
+    """
+    Transform state dict keys to replace '.unet' with '.model' for backward compatibility.
+    
+    Args:
+        state_dict: Dictionary containing model state
+        
+    Returns:
+        Transformed state dict with updated keys
+    """
+    transformed_dict = {}
+    for key, value in state_dict.items():
+        new_key = key.replace('.unet', '.model')
+        transformed_dict[new_key] = value
+    return transformed_dict
+
+
 def print_model_info(model):
     """Print detailed information about the model (PPO or ActionTranslator)."""
     if hasattr(model, 'source_policy') and hasattr(model, 'action_translator'):
@@ -94,13 +111,18 @@ def build_action_translator_from_config(cfg_dict, obs_dim=None, action_dim=None,
 
     # Keep only keys accepted by the constructor plus '_target_'
     filtered_cfg = {k: v for k, v in cfg_dict.items() if k == '_target_' or k in init_params}
-
+    
+    
     # Convert to OmegaConf and instantiate via Hydra
     cfg = OmegaConf.create(filtered_cfg)
     model = instantiate(cfg, _convert_='all')
 
     if load_checkpoint and checkpoint_path and os.path.isfile(checkpoint_path):
         state_dict = torch.load(checkpoint_path, map_location='cpu')
+        
+        # Transform state dict keys for backward compatibility
+        state_dict = transform_state_dict_keys(state_dict)
+        
         model.load_state_dict(state_dict, strict=False)
         print(f"Loaded weights from checkpoint: {checkpoint_path}")
 
@@ -165,13 +187,12 @@ def load_action_translator_policy_from_config(config_path, source_policy_checkpo
         raise ValueError("Action translator checkpoint path must be provided either in config or as argument")
     
     # Use build_action_translator_from_config for consistent parameter filtering
+    action_translator_config['checkpoint_path'] = action_translator_checkpoint_path
     action_translator = build_action_translator_from_config(
         action_translator_config, 
-        load_checkpoint=False
+        load_checkpoint=True
     )
     
-    # Load the action translator weights
-    action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
     action_translator.eval()
     
     # Create the combined policy
@@ -245,7 +266,10 @@ def load_action_translator_from_hydra_config_simple(config_path, source_policy_c
     if action_translator_checkpoint_path is None:
         raise ValueError("Action translator checkpoint path must be provided")
     
-    action_translator.load_state_dict(torch.load(action_translator_checkpoint_path, map_location='cpu'))
+    state_dict = torch.load(action_translator_checkpoint_path, map_location='cpu')
+    # Transform state dict keys for backward compatibility
+    state_dict = transform_state_dict_keys(state_dict)
+    action_translator.load_state_dict(state_dict)
     action_translator.eval()
     
     # Create combined policy
@@ -336,6 +360,8 @@ def load_inverse_dynamics_model_from_config(config_path, load_checkpoint=False):
         assert os.path.exists(checkpoint_path), f"Checkpoint path {checkpoint_path} does not exist"
         
         state_dict = torch.load(checkpoint_path, map_location='cpu')
+        # Transform state dict keys for backward compatibility
+        state_dict = transform_state_dict_keys(state_dict)
         model.load_state_dict(state_dict)
         print(f"Loaded model from checkpoint: {checkpoint_path}")
     

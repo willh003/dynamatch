@@ -7,5 +7,6 @@ diffusion_step_embed_dim: 16
 down_dims: [16, 32, 64]
 num_inference_steps: 10
 
+weight_decay: 1e-4
 
 checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/transitions/pendulum_integrable_large/pendulum_flow_id_20251009_003539_inverse_dynamics.pth

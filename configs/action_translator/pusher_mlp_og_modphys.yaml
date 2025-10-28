@@ -1,0 +1,7 @@
+_target_: generative_policies.action_translation.MlpActionTranslator
+name: pusher_mlp_og_modphys
+action_dim: 7
+obs_dim: 23
+net_arch: [64, 128, 64]
+
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/relabeled_actions/pusher_modphys/pusher_flow_id/translator_pusher_mlp_og_modphys_20251025_124516.pth

@@ -142,6 +142,8 @@ class VideoCallback(BaseCallback):
         deterministic: bool = True,
         flip_vertical: bool = False,
         max_steps_per_episode: int = 1000,
+        addl_noise_std: float = 0.0,
+        seed: int | None = None,
     ):
         super().__init__(verbose=verbose)
         self.eval_env = eval_env
@@ -150,9 +152,10 @@ class VideoCallback(BaseCallback):
         self.name_prefix = name_prefix
         self.episode_count = 0
         self.deterministic = deterministic
+        self.addl_noise_std = addl_noise_std
         self.flip_vertical = flip_vertical
         self.max_steps_per_episode = max_steps_per_episode
-
+        self.seed = seed
         self.env_id = eval_env.spec.id if eval_env.spec is not None else eval_env.name
         
     def _init_callback(self) -> None:
@@ -163,6 +166,7 @@ class VideoCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
             self._record_video()
+        self.seed += 1
         return True
 
     def _record_video(self) -> None:
@@ -170,8 +174,10 @@ class VideoCallback(BaseCallback):
         if self.verbose >= 1:
             print(f"Recording video episode {self.episode_count}...")
         
+        if self.seed is not None:
+            np.random.seed(self.seed)
         # Reset environment
-        obs, info = self.eval_env.reset()
+        obs, info = self.eval_env.reset(seed=self.seed)
 
         state = get_state_from_obs(obs, info, self.env_id)
         frames = []
@@ -190,6 +196,8 @@ class VideoCallback(BaseCallback):
                 # regular sb3 model
                 action, _ = self.model.predict(obs, deterministic=self.deterministic)
             
+            if self.addl_noise_std > 0:
+                action = action + np.random.normal(loc=0.0, scale=self.addl_noise_std, size=action.shape)
             # Render and store frame
             frame = self.eval_env.render()
             
@@ -400,14 +408,21 @@ def get_state_from_obs_door(obs: dict, _info: dict) -> np.ndarray:
     
     return full_obs
 
-def get_state_from_obs_pusher(obs: dict, _info: dict) -> np.ndarray:
+def get_state_from_obs_pusher(obs: dict, _info: dict, state_indices: list = None) -> np.ndarray:
     """
     Get state from observation array for pusher environment.
     """
+    if state_indices is not None:
+        if len(obs.shape) > 1:
+            state = obs[:, state_indices]
+        else:
+            state = obs[state_indices]
+    else:
+        state = obs
     
-    return obs
+    return state
 
-def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
+def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str, state_indices: list = None) -> np.ndarray:
     """
     Get state from observation array for environment.
     """
@@ -422,7 +437,7 @@ def get_state_from_obs(obs: np.ndarray, info:dict, env_id: str) -> np.ndarray:
     elif "Door" in env_id:
         return get_state_from_obs_door(obs, info)
     elif "Pusher" in env_id:
-        return get_state_from_obs_pusher(obs, info)
+        return get_state_from_obs_pusher(obs, info, state_indices)
     else:
         raise ValueError(f"Environment {env_id} not supported for state getting - implement get_state_from_obs for this environment")
 
@@ -437,8 +452,7 @@ def get_reward_from_obs_pusher(reward, info) -> float:
         reward = [i['reward_dist'] for i in info]
     return reward
 
-
-def get_reward_from_obs(reward: float, info:dict, env_id: str) -> float:
+def get_reward_from_obs(reward: float, obs: dict, info:dict, env_id: str) -> float:
     """
     Get reward from observation array for environment.
     """
@@ -446,3 +460,38 @@ def get_reward_from_obs(reward: float, info:dict, env_id: str) -> float:
         return get_reward_from_obs_pusher(reward, info)
     else:
         return reward
+
+def get_success_from_obs_pusher(obs: dict, info:dict) -> bool:
+    """
+    Get success from observation array for pusher environment.
+    """
+    PUSHER_THRESHOLD = 0.1
+    if len(obs.shape) > 1:
+        goal = obs[:, 20:23]
+        object_pos = obs[:, 14:17]
+    else:
+        goal = obs[20:23]
+        object_pos = obs[14:17]
+
+    dist_to_goal = np.linalg.norm(object_pos - goal, axis=-1)
+
+    return dist_to_goal < PUSHER_THRESHOLD
+
+def get_success_from_obs_pendulum(obs: dict, _info: dict) -> bool:
+    """
+    Get success from observation array for pendulum environment.
+    """
+    return np.zeros(obs.shape[0], dtype=bool)
+
+def get_success_from_obs(obs: dict, info:dict, env_id: str) -> bool:
+    """
+    Get success from observation array for environment.
+
+    """
+    if "Pusher" in env_id:
+        return get_success_from_obs_pusher(obs, info)
+    elif "Pendulum" in env_id:
+        return get_success_from_obs_pendulum(obs, info)
+    else:
+        print(f"WARNING: no success function implemented for environment {env_id}")
+        return False

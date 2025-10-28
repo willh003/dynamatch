@@ -8,10 +8,10 @@ import torch
 import dask.array as da
 from torch.utils.data import Dataset
 
-from datasets.utils.buffer import CompressedTrajectoryBuffer
-from datasets.utils.normalizer import LinearNormalizer, NestedDictLinearNormalizer
-from datasets.utils.obs_utils import unflatten_obs
-from datasets.utils.sampler import TrajectorySampler
+from datasets.trajectory_utils.buffer import CompressedTrajectoryBuffer
+from datasets.trajectory_utils.normalizer import LinearNormalizer, NestedDictLinearNormalizer
+from datasets.trajectory_utils.obs_utils import unflatten_obs
+from datasets.trajectory_utils.sampler import TrajectorySampler
 
 class TrajectoryDatasetInterface(Dataset):
     """

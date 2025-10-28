@@ -2,7 +2,6 @@ _target_: null
 name: pusher
 
 # Dataset collection parameters
-# model_path: /home/wph52/weird/dynamics/rl/runs/Robosuite-Door-Panda_20251016_190434/models/best_model.zip
 defaults:
   - source_policy: pusher
 

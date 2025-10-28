@@ -1,0 +1,16 @@
+_target_: generative_policies.inverse_dynamics.FlowInverseDynamics
+name: pusher_flow_id_object_gripper
+action_dim: 7
+obs_dim: 6
+
+diffusion_step_embed_dim: 32
+down_dims: [32, 64, 128]
+num_inference_steps: 10
+
+#weight_decay: 1e-4
+
+state_indices: [14, 15, 16, 17, 18, 19] # x,y,z gripper position and x, y, z object position
+action_indices: null
+
+# Trained on length 100:
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher/id_pusher_flow_id_object_gripper_20251024_184751.pth

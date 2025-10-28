@@ -5,86 +5,9 @@ import argparse
 import os
 from typing import Tuple, Dict, Any
 
-
-def load_zarr_dataset(dataset_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
-    """
-    Load a zarr dataset and extract state and next_state data for (s, s') analysis.
-    
-    Args:
-        dataset_path: Path to the zarr file
-        
-    Returns:
-        states: Array of current states (N, state_dim)
-        next_states: Array of next states (N, state_dim)
-        metadata: Dictionary containing dataset metadata
-    """
-    print(f"Loading dataset from: {dataset_path}")
-    
-    store = zarr.open(dataset_path, mode='r')
-    data_group = store['data']
-    meta_group = store['meta']
-    
-    # Check if this is a transition dataset (with state/next_state keys)
-    if 'state' in data_group and 'next_state' in data_group:
-        # Transition dataset
-        states = data_group['state'][:]
-        next_states = data_group['next_state'][:]
-        print(f"Loaded transition dataset with {len(states)} samples")
-        print(f"State shape: {states.shape}")
-        print(f"Next state shape: {next_states.shape}")
-        metadata = {
-            'type': 'transition',
-            'num_samples': len(states)
-        }
-    else:
-        # For trajectory datasets, we need to reconstruct (s, s') pairs from sequential observations
-        obs_keys = [key for key in data_group.keys() if key.startswith('obs.')]
-        if not obs_keys:
-            raise ValueError(f"No observation keys found in dataset at {dataset_path}")
-        
-        # Use the first observation key
-        obs_key = obs_keys[0]
-        observations = data_group[obs_key][:]
-        
-        # Get episode ends to reconstruct state transitions
-        if 'episode_ends' in meta_group:
-            episode_ends = meta_group['episode_ends'][:]
-            print(f"Loaded trajectory dataset with {len(observations)} observations across {len(episode_ends)} episodes")
-            
-            # Create (s, s') pairs by taking consecutive observations within episodes
-            states = []
-            next_states = []
-            
-            start_idx = 0
-            for end_idx in episode_ends:
-                episode_obs = observations[start_idx:end_idx]
-                if len(episode_obs) > 1:
-                    # Create pairs of consecutive observations
-                    states.extend(episode_obs[:-1])
-                    next_states.extend(episode_obs[1:])
-                start_idx = end_idx
-            
-            states = np.array(states)
-            next_states = np.array(next_states)
-        else:
-            # If no episode structure, assume all observations are sequential
-            if len(observations) > 1:
-                states = observations[:-1]
-                next_states = observations[1:]
-            else:
-                raise ValueError("Not enough observations to create state transitions")
-        
-        print(f"Created {len(states)} state transition pairs")
-        print(f"State shape: {states.shape}")
-        print(f"Next state shape: {next_states.shape}")
-        metadata = {
-            'type': 'trajectory',
-            'obs_key': obs_key,
-            'num_samples': len(states),
-            'all_obs_keys': obs_keys
-        }
-    
-    return states, next_states, metadata
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from utils.data_utils import load_transition_dataset
 
 
 def plot_observation_distributions(obs1: np.ndarray, obs2: np.ndarray, 
@@ -222,6 +145,16 @@ def plot_state_transition_heatmaps(states1: np.ndarray, next_states1: np.ndarray
     print(f"Plot saved to: {output_path}")
     
 
+def plot_object_states(states: np.ndarray, object_state_indices = [17,18], output_path: str = None):
+    """
+    Plot the object states.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    ax.scatter(states[:, object_state_indices[0]], states[:, object_state_indices[1]], s=.3)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"Plot saved to: {output_path}")
 
 def main():
     parser = argparse.ArgumentParser(description='Compare observation distributions and state transitions between two zarr datasets')
@@ -236,11 +169,9 @@ def main():
     args = parser.parse_args()
     
     # Load both datasets
-    states1, next_states1, meta1 = load_zarr_dataset(args.dataset1_path)
-    states2, next_states2, meta2 = load_zarr_dataset(args.dataset2_path)
-    
-    print(f"\nDataset 1 metadata: {meta1}")
-    print(f"Dataset 2 metadata: {meta2}")
+    states1, _, next_states1 = load_transition_dataset(args.dataset1_path)
+    states2, _, next_states2 = load_transition_dataset(args.dataset2_path)    
+
     
     # Set output paths - default to both plots if no specific output is provided
     if args.output_prefix:
@@ -272,6 +203,9 @@ def main():
         args.dataset1_name, args.dataset2_name,
         transition_output
     )
+
+    plot_object_states(states1, [17,18], "dataset_plots/object_states_1.png")
+    plot_object_states(states2, [17,18], "dataset_plots/object_states_2.png")
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ def quick_validate_id(dataset, env, max_samples=2000):
 
 def train_inverse_dynamics(states, actions, next_states, model, 
                           num_epochs=100, learning_rate=1e-3, 
-                          batch_size=64, device='cpu', val_split=0.2, env_id=None, 
+                          batch_size=64, device='cpu', val_split=0.2, weight_decay=0.0, env_id=None, 
                           model_output_path=None, validate_physics_id=False):
     """Train the Inverse Dynamics model."""
     print("=== Training Inverse Dynamics ===")
@@ -94,7 +94,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
                 print(f"{name}: {param_count:,} parameters")
     print("=" * 40)
     
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     
     # Training loop
     train_losses = []
@@ -149,6 +149,8 @@ def train_inverse_dynamics(states, actions, next_states, model,
         epoch_val_loss = 0.0
         num_val_batches = 0
         epoch_val_physics_id_loss = 0.0
+        epoch_val_path_length = 0.0
+        epoch_val_straight_path_length = 0.0
         
         # Create inner progress bar for validation batches
         val_pbar = tqdm(val_dataloader, desc=f"Val Epoch {epoch+1}/{num_epochs}", 
@@ -163,8 +165,11 @@ def train_inverse_dynamics(states, actions, next_states, model,
                 # Forward pass
                 #loss = model(batch_states, batch_next_states, batch_actions)
 
-                preds = model.predict(batch_states, batch_next_states)
+                path_length, straight_path_length, preds = model.compute_path_length(batch_states, batch_next_states, batch_actions)
                 loss = torch.nn.functional.mse_loss(torch.as_tensor(preds).to(device), batch_actions)
+
+                mean_path_length = path_length.mean()
+                mean_straight_length = straight_path_length.mean()
 
                 if validate_physics_id:
                     physics_id_actions = [gym_inverse_dynamics(physics_env, state.cpu().numpy(), next_state.cpu().numpy()) for state, next_state in zip(batch_states, batch_next_states)]
@@ -176,6 +181,8 @@ def train_inverse_dynamics(states, actions, next_states, model,
                     epoch_val_physics_id_loss += physics_id_error.item()
 
                 epoch_val_loss += loss.item()
+                epoch_val_path_length += mean_path_length.item()
+                epoch_val_straight_path_length += mean_straight_length.item()
                 num_val_batches += 1.
                 
                 # Update validation progress bar with current loss
@@ -187,6 +194,9 @@ def train_inverse_dynamics(states, actions, next_states, model,
         avg_val_loss = epoch_val_loss / num_val_batches
         val_losses.append(avg_val_loss)
         avg_val_physics_id_error = epoch_val_physics_id_loss / num_val_batches
+
+        avg_val_path_length = epoch_val_path_length / num_val_batches
+        avg_val_straight_path_length = epoch_val_straight_path_length / num_val_batches
 
         # Save checkpoint if validation loss improved
         if model_output_path is not None and avg_val_loss < best_val_loss:
@@ -206,6 +216,9 @@ def train_inverse_dynamics(states, actions, next_states, model,
             "epoch": epoch,
             "train_loss": avg_train_loss,
             "val_loss": avg_val_loss,
+            "val_flow_path_length": avg_val_path_length,
+            "val_straight_path_length": avg_val_straight_path_length,
+            "val_path_length_diff": avg_val_straight_path_length - avg_val_path_length,
             "val_physics_id_error": avg_val_physics_id_error,
             "learning_rate": optimizer.param_groups[0]['lr']
         })
@@ -279,8 +292,13 @@ def main():
     print(f"Environment ID: {env_id}")
     
     # Load inverse dynamics dataset
-    states, actions, next_states = load_transition_dataset(dataset_path)
-    
+    with open(args.model_config, 'r', encoding='utf-8') as f:
+        model_config = yaml.safe_load(f)
+    state_indices = model_config.get('state_indices', None)
+    action_indices = model_config.get('action_indices', None)
+
+    states, actions, next_states = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
+
     # Build model from config
     print(f"Building inverse dynamics model from model config: {args.model_config}")
     model_from_config = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=False)
@@ -296,7 +314,8 @@ def main():
             "batch_size": args.batch_size,
             "device": args.device,
             "val_split": args.val_split,
-            "config_path": args.dataset_config,
+            "dataset_config_path": args.dataset_config,
+            "model_config_path": args.model_config,
         }
     train_config_dict.update(model_config_dict)
     model_name = model_config_dict['name']
@@ -311,12 +330,14 @@ def main():
         config=train_config_dict,
         tags=wandb_tags
     )
+
+    weight_decay = float(train_config_dict.get('weight_decay', 0.0))
     
     # Train inverse dynamics model
     model, train_losses, val_losses = train_inverse_dynamics(
         states, actions, next_states, model_from_config,
         args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split, env_id, model_output_path, args.validate_physics_id
+        args.batch_size, args.device, args.val_split, weight_decay, env_id, model_output_path, args.validate_physics_id
     )
     
     # Save final model (overwrites the best checkpoint with the final model)

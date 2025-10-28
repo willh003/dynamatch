@@ -7,8 +7,14 @@ diffusion_step_embed_dim: 32
 down_dims: [32, 64, 128]
 num_inference_steps: 10
 
+
+weight_decay: 1e-4
+
+# Trained with weight decay
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher/id_pusher_flow_id_20251022_085409.pth
+
 # Trained on length 100:
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher/id_pusher_flow_id_20251019_194156.pth
+# checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher/id_pusher_flow_id_20251019_194156.pth
 
 # Trained on length 50:
 #checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/transitions/pusher/id_pusher_flow_id_20251019_105536.pth

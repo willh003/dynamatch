@@ -7,8 +7,12 @@ diffusion_step_embed_dim: 32
 down_dims: [32, 64]
 num_inference_steps: 10
 
+
+# Target with 1.8 randn (100 traj x 100 steps)
+checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_modphys_random/translator_pendulum_flow_20251021_112330.pth
+
 # Large dataset (100 traj)
-checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_modphys/translator_pendulum_flow_20251020_161848.pth
+# checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_modphys/translator_pendulum_flow_20251020_161848.pth
 
 # Small dataset (10 traj)
 # checkpoint_path: /home/wph52/weird/dynamics/datasets/pendulum/relabeled_actions/pendulum_modphys_10/translator_pendulum_flow_20251020_170505.pth

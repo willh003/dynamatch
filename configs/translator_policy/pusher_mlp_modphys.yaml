@@ -1,6 +1,6 @@
 defaults:
   - source_policy: pusher
-  - action_translator: pusher_flow_og_modphys_wd
+  - action_translator: pusher_mlp_og_modphys
 
 _target_: generative_policies.action_translation.ActionTranslatorPolicy
  

@@ -88,6 +88,7 @@ def collect_transitions_parallel(
     deterministic: bool = False,
     seed: Optional[int] = None,
     validate_physics_id: bool = False,
+    addl_noise_std: float = 0.0,
     n_envs: int = 4,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -101,6 +102,8 @@ def collect_transitions_parallel(
         max_steps_per_episode: Maximum steps per episode
         deterministic: Whether to use deterministic actions
         seed: Random seed for environment resets
+        validate_physics_id: Whether to validate using physics ID
+        addl_noise_std: Standard deviation of additional noise to add to the actions (if 0, then no noise is added)
         n_envs: Number of parallel environments
         
     Returns:
@@ -134,6 +137,10 @@ def collect_transitions_parallel(
     with tqdm(total=num_transitions, desc="Collecting transitions") as pbar:
         while len(all_states) < num_transitions:
             policy_actions, _ = model.predict(obs, deterministic=deterministic)
+
+            if addl_noise_std > 0:
+                policy_actions = policy_actions + np.random.normal(loc=0.0, scale=addl_noise_std, size=policy_actions.shape)
+
             next_obs, rewards, dones, next_infos = vec_env.step(policy_actions)
             
             states = get_state_from_vec_env(obs, infos, env_id)
@@ -350,6 +357,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
     max_steps_per_episode = config.get('max_steps_per_episode', 1000)
     num_transitions = config.get('num_episodes', 1000) * max_steps_per_episode
     deterministic = config.get('deterministic', False)
+    addl_noise_std = config.get('addl_noise_std', 0.0)
     seed = config.get('seed', None)
     append = config.get('append', False)
         
@@ -386,6 +394,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
         seed=seed,
         n_envs=n_envs,
         validate_physics_id=validate_physics_id,
+        addl_noise_std=addl_noise_std,
     )
     
     # Save to zarr

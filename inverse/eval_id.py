@@ -10,7 +10,7 @@ from tqdm import tqdm
 import sys
 import imageio.v2 as imageio
 from pathlib import Path
-
+import yaml
 from cluster_utils import set_cluster_graphics_vars
 
 
@@ -77,7 +77,7 @@ def rollout_policy(env, policy, deterministic=False, max_steps=1000):
     }
 
 
-def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, compute_physics_id=True, device='cpu'):
+def evaluate_inverse_dynamics(trajectory, learned_model, model_config, physics_env, compute_physics_id=True, device='cpu'):
     """
     Evaluate both learned and physics-based inverse dynamics on the trajectory.
     
@@ -91,10 +91,18 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, compute_ph
         Dictionary containing errors and predicted actions for both methods
     """
     print("Evaluating inverse dynamics...")
+    with open(model_config, 'r', encoding='utf-8') as f:
+        model_config = yaml.safe_load(f)
+    state_indices = model_config.get('state_indices', None)
+    action_indices = model_config.get('action_indices', None)
     
     states = trajectory['states']
     true_actions = trajectory['actions']
     next_states = trajectory['next_states']
+
+    states = states[:, state_indices]
+    next_states = next_states[:, state_indices]
+    true_actions = true_actions[:, action_indices]
     
     learned_errors = []
     physics_errors = []
@@ -118,8 +126,6 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, compute_ph
             
             predicted_action = learned_model.predict(state_tensor, next_state_tensor)
             predicted_action = predicted_action[0]  # Remove batch dimension
-
-    
         
         learned_error = np.linalg.norm(predicted_action - true_action)
         learned_errors.append(learned_error)
@@ -133,7 +139,7 @@ def evaluate_inverse_dynamics(trajectory, learned_model, physics_env, compute_ph
             physics_actions.append(physics_action)
         else:
             physics_errors.append(0.0)
-            physics_actions.append(np.zeros_like(true_action))
+            physics_actions.append(np.zeros_like(predicted_action))
     
     return {
         'learned_errors': np.array(learned_errors),
@@ -217,7 +223,8 @@ def plot_actions_over_time(trajectory, learned_actions, physics_actions, output_
         # Plot actions over time
         ax.plot(steps, true_actions[:, i], label='True Actions', alpha=0.8, linewidth=2)
         ax.plot(steps, learned_actions[:, i], label='Learned ID', alpha=0.7, linestyle='--')
-        ax.plot(steps, physics_actions[:, i], label='Physics ID', alpha=0.7, linestyle=':')
+        if len(physics_actions) > 0:
+            ax.plot(steps, physics_actions[:, i], label='Physics ID', alpha=0.7, linestyle=':')
         
         ax.set_xlabel('Time Step')
         ax.set_ylabel(f'Action {i+1}')
@@ -332,6 +339,7 @@ def main():
     print("Loading inverse dynamics model...")
 
     learned_model = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=True)
+
     
     # Create environments
     print("Creating environments...")
@@ -343,7 +351,7 @@ def main():
     print(f"Rollout completed: {len(trajectory['states'])} steps")
     
     # Evaluate inverse dynamics
-    errors = evaluate_inverse_dynamics(trajectory, learned_model, physics_env, args.physics_id, args.device)
+    errors = evaluate_inverse_dynamics(trajectory, learned_model, args.model_config, physics_env, args.physics_id, args.device)
     
     # Plot results
     plot_path = os.path.join(args.output_dir, 'inverse_dynamics_errors.png')
