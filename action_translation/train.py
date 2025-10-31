@@ -13,11 +13,12 @@ import sys
 import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.model_utils import build_action_translator_from_config
-from utils.data_utils import get_relabeled_actions_path_from_config
+from utils.data_utils import get_relabeled_actions_path_from_config, load_transition_dataset
 from eval_policy_parallel import evaluate_policy_parallel
 from utils.model_utils import load_action_translator_policy_from_config
 from envs.register_envs import register_custom_envs
 from utils.config_utils import load_yaml_config
+
 
 def load_action_translation_dataset(dataset_path):
     """Load action translation dataset from zarr file."""
@@ -31,6 +32,7 @@ def load_action_translation_dataset(dataset_path):
     original_actions = data_group['original_action'][:]
     shifted_actions = data_group['shifted_action'][:]
     num_samples = meta_group['num_samples'][0]
+
     
     print(f"Loaded dataset with {num_samples} samples")
     print(f"State shape: {states.shape}")
@@ -40,7 +42,7 @@ def load_action_translation_dataset(dataset_path):
     return states, original_actions, shifted_actions
 
 
-def train_action_translator(states,model, original_actions, shifted_actions, 
+def train_action_translator(model, dataset, 
                         num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2, weight_decay=0.0, 
                           model_output_path=None,dataset_config=None, translator_policy_config=None, id_config=None):
@@ -51,21 +53,6 @@ def train_action_translator(states,model, original_actions, shifted_actions,
     """
     print("=== Training Action Translator ===")
 
-    
-    # Convert to tensors
-    states_tensor = torch.FloatTensor(states)
-    original_actions_tensor = torch.FloatTensor(original_actions)
-    shifted_actions_tensor = torch.FloatTensor(shifted_actions)
-
-    # Add action dimension if not present
-    if len(original_actions_tensor.shape) == 1:
-        original_actions_tensor = original_actions_tensor.unsqueeze(1)
-    if len(shifted_actions_tensor.shape) == 1:
-        shifted_actions_tensor = shifted_actions_tensor.unsqueeze(1)
-    
-    # Create dataset and split into train/val
-    dataset = TensorDataset(states_tensor, original_actions_tensor, shifted_actions_tensor)
-    
     # Calculate split sizes
     total_size = len(dataset)
     val_size = int(val_split * total_size)
@@ -121,15 +108,22 @@ def train_action_translator(states,model, original_actions, shifted_actions,
         train_pbar = tqdm(train_dataloader, desc=f"Train Epoch {epoch+1}/{num_epochs}", 
                          position=1, leave=False, ncols=100)
         
-        for batch_states, batch_original_actions, batch_shifted_actions in train_pbar:
-            batch_states = batch_states.to(device)
-            batch_original_actions = batch_original_actions.to(device)
-            batch_shifted_actions = batch_shifted_actions.to(device)
-            
+        for item in train_pbar:
+            if len(item) == 5:
+                # item is (states, original_actions, shifted_actions, img, next_img)
+                batch_states, batch_original_actions, batch_shifted_actions, batch_img, batch_next_img = item
+                use_images = True
+                obs = (batch_img, batch_states)
+            else:
+                # item is (states, original_actions, shifted_actions)
+                batch_states, batch_original_actions, batch_shifted_actions = item
+                use_images = False
+                obs = batch_states
+
             optimizer.zero_grad()
             
-            # Forward pass: predict shifted action given state and original action
-            loss = model(obs=batch_states, 
+            # Forward pass: predict shifted action given obs and original action
+            loss = model(obs=obs, 
                         action_prior=batch_original_actions,
                         action=batch_shifted_actions)
                          
@@ -162,13 +156,18 @@ def train_action_translator(states,model, original_actions, shifted_actions,
                        position=1, leave=False, ncols=100)
         
         with torch.no_grad():
-            for batch_states, batch_original_actions, batch_shifted_actions in val_pbar:
-                batch_states = batch_states.to(device)
-                batch_original_actions = batch_original_actions.to(device)
-                batch_shifted_actions = batch_shifted_actions.to(device)
-                
+            for item in val_pbar:
+                if len(item) == 5:
+                    batch_states, batch_original_actions, batch_shifted_actions, batch_img, batch_next_img = item
+                    use_images = True
+                    obs = (batch_img, batch_states)
+                else:
+                    batch_states, batch_original_actions, batch_shifted_actions = item
+                    use_images = False
+                    obs = batch_states
+
                 # Forward pass
-                path_length, straight_path_length, preds = model.compute_path_length(batch_states, batch_original_actions, batch_shifted_actions)
+                path_length, straight_path_length, preds = model.compute_path_length(obs, batch_original_actions, batch_shifted_actions)
                 loss = torch.nn.functional.mse_loss(torch.as_tensor(preds).to(device), batch_shifted_actions)
 
                 mean_path_length = path_length.mean()
@@ -314,15 +313,11 @@ def main():
     model_output_path, model_path_name = create_model_path_from_data_path(args.model_config, dataset_path)
     plot_output_path = os.path.join(os.path.dirname(model_output_path), 'action_distributions.png')
 
-    
-    
     print(f"Dataset path: {dataset_path}")
     print(f"Model output path: {model_output_path}")
     print(f"Plot output path: {plot_output_path}")
     
-    # Load action translation dataset
-    states, original_actions, shifted_actions = load_action_translation_dataset(dataset_path)
-    
+
     # Optionally build model from config for flexible architectures
     print(f"Building action translator from model config: {args.model_config}")
     # Load the YAML config first
@@ -330,6 +325,10 @@ def main():
         model_config_dict = yaml.safe_load(f)
     model_from_config = build_action_translator_from_config(model_config_dict, load_checkpoint=False)
 
+    # Load action translation dataset
+    img_obs = model_config_dict.get('img_obs', False)
+    dataset = load_transition_dataset(dataset_path, img_obs=img_obs)
+    
     train_config_dict = {
             "num_epochs": args.num_epochs,
             "learning_rate": args.learning_rate,
@@ -360,7 +359,7 @@ def main():
     
     # Train action translator
     model, train_losses, val_losses = train_action_translator(
-        states, model_from_config, original_actions, shifted_actions,
+        model_from_config, dataset,
         args.num_epochs, args.learning_rate, 
         args.batch_size, args.device, args.val_split, weight_decay, model_output_path,
         args.dataset_config, args.translator_policy_config, args.id_config

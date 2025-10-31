@@ -18,7 +18,7 @@ from envs.env_utils import get_state_from_obs
 import gymnasium as gym
 from inverse.physics_inverse_dynamics import gym_inverse_dynamics
 from envs.register_envs import register_custom_envs
-from envs.env_utils import make_vec_env
+from envs.env_utils import make_vec_env, get_img_from_vec_env
 from utils.model_utils import load_source_policy_from_config
 register_custom_envs()
 
@@ -122,13 +122,19 @@ def collect_transitions_parallel(
     vec_env = make_vec_env(env_id, n_envs=n_envs, **env_kwargs)
     
     all_states = []
+    all_imgs = []
+    all_next_imgs = []
     all_next_states = []
     all_actions = []
     all_rewards = []
     all_gt_id_errors = []
+    img_obs = "rgb_array" in env_kwargs.get("render_mode", "")
     
     # Initialize environments
     obs = vec_env.reset()
+    if img_obs:
+        img = get_img_from_vec_env(vec_env)
+
     infos = vec_env.reset_infos
 
     episode_steps = np.zeros(n_envs)
@@ -142,6 +148,9 @@ def collect_transitions_parallel(
                 policy_actions = policy_actions + np.random.normal(loc=0.0, scale=addl_noise_std, size=policy_actions.shape)
 
             next_obs, rewards, dones, next_infos = vec_env.step(policy_actions)
+
+            if img_obs:
+                next_img = get_img_from_vec_env(vec_env)
             
             states = get_state_from_vec_env(obs, infos, env_id)
             next_states = get_state_from_vec_env(next_obs, next_infos, env_id)
@@ -159,6 +168,10 @@ def collect_transitions_parallel(
                     all_next_states.append(next_state)
                     all_actions.append(action)
                     all_rewards.append(rewards[env_idx])
+
+                    if img_obs:
+                        all_imgs.append(img[env_idx])
+                        all_next_imgs.append(next_img[env_idx])
                     
                     if validate_physics_id:
                         error = get_physics_id_error(physics_env, state, next_state, action)
@@ -187,7 +200,10 @@ def collect_transitions_parallel(
     all_rewards = np.array(all_rewards, dtype=np.float32)
     all_gt_id_errors = np.array(all_gt_id_errors, dtype=np.float32)
 
-    return all_states, all_actions, all_next_states, all_rewards, all_gt_id_errors
+    all_imgs = np.array(all_imgs)
+    all_next_imgs = np.array(all_next_imgs)
+
+    return all_states, all_actions, all_next_states, all_rewards, all_gt_id_errors, all_imgs, all_next_imgs
 
 
 def get_physics_id_error(physics_env, state, next_state, action):
@@ -202,8 +218,9 @@ def save_transitions_to_zarr(
     states: np.ndarray,
     actions: np.ndarray,
     next_states: np.ndarray,
-    output_path: str,
-    append: bool = False,
+    imgs: np.ndarray,
+    next_imgs: np.ndarray,
+    output_path: str
 ) -> str:
     """
     Save transition data to zarr format compatible with inverse dynamics training.
@@ -212,6 +229,8 @@ def save_transitions_to_zarr(
         states: State array (s)
         actions: Action array (a)
         next_states: Next state array (s')
+        imgs: Image array (I)
+        next_imgs: Next image array (I')
         output_path: Path to save the zarr file
         append: Whether to append to existing file
         
@@ -224,60 +243,49 @@ def save_transitions_to_zarr(
     # Check if file exists and we want to append
     file_exists = os.path.exists(output_path)
     
-    if append and file_exists:
-        # Open existing zarr store in read/write mode
-        store = zarr.open(output_path, mode='r+')
-        
-        # Get existing data
-        data_group = store['data']
-        
-        # Get existing data and append
-        existing_states = data_group['state'][:]
-        existing_actions = data_group['action'][:]
-        existing_next_states = data_group['next_state'][:]
-        
-        combined_states = np.concatenate([existing_states, states], axis=0)
-        combined_actions = np.concatenate([existing_actions, actions], axis=0)
-        combined_next_states = np.concatenate([existing_next_states, next_states], axis=0)
-        
-        # Resize and update arrays
-        data_group['state'].resize(combined_states.shape)
-        data_group['state'][:] = combined_states
-        
-        data_group['action'].resize(combined_actions.shape)
-        data_group['action'][:] = combined_actions
-        
-        data_group['next_state'].resize(combined_next_states.shape)
-        data_group['next_state'][:] = combined_next_states
-        
-        # Update metadata
-        store['meta']['num_samples'][:] = [len(combined_states)]
-        
-        print(f"Appended {len(states)} new transitions to existing file")
-        print(f"Total transitions: {len(combined_states)}")
-        
-    else:
-        # Create new zarr store (overwrites if exists)
-        store = zarr.open(output_path, mode='w')
-        
-        # Create data group
-        data_group = store.create_group('data')
-        
-        # Save states, actions, and next states
-        data_group.create_array('state', data=states.astype(np.float32))
-        data_group.create_array('action', data=actions.astype(np.float32))
-        data_group.create_array('next_state', data=next_states.astype(np.float32))
-        
-        # Create meta group
-        meta_group = store.create_group('meta')
-        
-        # Save dataset info
-        meta_group.create_array('num_samples', data=np.array([len(states)]))
-        
-        print(f"Total transitions: {len(states)}")
-        print(f"State shape: {states.shape}")
-        print(f"Action shape: {actions.shape}")
-        print(f"Next state shape: {next_states.shape}")
+
+    # Create new zarr store (overwrites if exists)
+    store = zarr.open(output_path, mode='w')
+    
+    # Create data group
+    data_group = store.create_group('data')
+    
+    # Save states, actions, and next states
+    data_group.create_array('state', data=states.astype(np.float32))
+    data_group.create_array('action', data=actions.astype(np.float32))
+    data_group.create_array('next_state', data=next_states.astype(np.float32))
+    if len(imgs) > 0:
+        img_array = data_group.create_dataset(
+            'img', 
+            shape=(len(imgs), *imgs[0].shape),
+            dtype=imgs[0].dtype,
+            chunks=(100, *imgs[0].shape)  # Adjust chunk size as needed
+        )
+
+        next_img_array = data_group.create_dataset(
+            'next_img', 
+            shape=(len(next_imgs), *next_imgs[0].shape),
+            dtype=next_imgs[0].dtype,
+            chunks=(100, *next_imgs[0].shape)  # Adjust chunk size as needed
+        )
+
+        # Write in batches
+        batch_size = 1000
+        for i in range(0, len(imgs), batch_size):
+            img_array[i:i+batch_size] = imgs[i:i+batch_size]
+            next_img_array[i:i+batch_size] = next_imgs[i:i+batch_size]
+            
+            
+    # Create meta group
+    meta_group = store.create_group('meta')
+    
+    # Save dataset info
+    meta_group.create_array('num_samples', data=np.array([len(states)]))
+    
+    print(f"Total transitions: {len(states)}")
+    print(f"State shape: {states.shape}")
+    print(f"Action shape: {actions.shape}")
+    print(f"Next state shape: {next_states.shape}")
     
     return output_path
 
@@ -359,7 +367,6 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
     deterministic = config.get('deterministic', False)
     addl_noise_std = config.get('addl_noise_std', 0.0)
     seed = config.get('seed', None)
-    append = config.get('append', False)
         
     # Create output path
     output_path = get_transition_path_from_dataset_config(config_path)
@@ -384,7 +391,7 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
     else:
         raise ValueError("No valid source policy configuration found in config. Expected 'defaults', 'source_policy', or 'model_path'")
     
-    states, actions, next_states, all_rewards, all_gt_id_errors = collect_transitions_parallel(
+    states, actions, next_states, all_rewards, all_gt_id_errors, imgs, next_imgs = collect_transitions_parallel(
         source_policy_config=source_policy_config,
         env_id=env_id,
         env_kwargs=env_kwargs,
@@ -403,8 +410,9 @@ def collect_transition_dataset_parallel(config_path: str, n_envs: int = 4, valid
         states=states,
         actions=actions,
         next_states=next_states,
+        imgs=imgs,
+        next_imgs=next_imgs,
         output_path=output_path,
-        append=append,
     )
 
 

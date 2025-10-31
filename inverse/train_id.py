@@ -35,7 +35,7 @@ def quick_validate_id(dataset, env, max_samples=2000):
     print(f"Mean Physics ID error: {np.mean(errors):.3e}, Std Physics ID error: {np.std(errors):.3e}, Max ID error: {np.max(errors):.3e}, Min ID error: {np.min(errors):.3e}")
 
 
-def train_inverse_dynamics(states, actions, next_states, model, 
+def train_inverse_dynamics(dataset_path, state_indices=None, action_indices=None, model, 
                           num_epochs=100, learning_rate=1e-3, 
                           batch_size=64, device='cpu', val_split=0.2, weight_decay=0.0, env_id=None, 
                           model_output_path=None, validate_physics_id=False):
@@ -51,16 +51,7 @@ def train_inverse_dynamics(states, actions, next_states, model,
         physics_env = gym.make(env_id)
 
     # Convert to tensors
-    states_tensor = torch.FloatTensor(states)
-    actions_tensor = torch.FloatTensor(actions)
-    next_states_tensor = torch.FloatTensor(next_states)
-
-    # Add action dimension if not present
-    if len(actions_tensor.shape) == 1:
-        actions_tensor = actions_tensor.unsqueeze(1)
-    
-    # Create dataset and split into train/val
-    dataset = TensorDataset(states_tensor, actions_tensor, next_states_tensor)
+    dataset = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
 
     # Calculate split sizes
     total_size = len(dataset)
@@ -297,8 +288,6 @@ def main():
     state_indices = model_config.get('state_indices', None)
     action_indices = model_config.get('action_indices', None)
 
-    states, actions, next_states = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
-
     # Build model from config
     print(f"Building inverse dynamics model from model config: {args.model_config}")
     model_from_config = load_inverse_dynamics_model_from_config(args.model_config, load_checkpoint=False)
@@ -335,9 +324,10 @@ def main():
     
     # Train inverse dynamics model
     model, train_losses, val_losses = train_inverse_dynamics(
-        states, actions, next_states, model_from_config,
-        args.num_epochs, args.learning_rate, 
-        args.batch_size, args.device, args.val_split, weight_decay, env_id, model_output_path, args.validate_physics_id
+        dataset_path, state_indices=state_indices, action_indices=action_indices, model=model_from_config,
+        num_epochs=args.num_epochs, learning_rate= args.learning_rate, batch_size=args.batch_size, device=args.device, 
+        val_split=args.val_split, weight_decay=weight_decay, env_id=env_id, 
+        model_output_path=model_output_path, validate_physics_id=args.validate_physics_id
     )
     
     # Save final model (overwrites the best checkpoint with the final model)

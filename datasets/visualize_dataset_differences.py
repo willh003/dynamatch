@@ -7,7 +7,7 @@ from typing import Tuple, Dict, Any
 
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from utils.data_utils import load_transition_dataset
+from utils.data_utils import load_transitions
 
 
 def plot_observation_distributions(obs1: np.ndarray, obs2: np.ndarray, 
@@ -169,8 +169,8 @@ def main():
     args = parser.parse_args()
     
     # Load both datasets
-    states1, _, next_states1 = load_transition_dataset(args.dataset1_path)
-    states2, _, next_states2 = load_transition_dataset(args.dataset2_path)    
+    states1, _, next_states1, _, _ = load_transitions(args.dataset1_path)
+    states2, _, next_states2, _, _ = load_transitions(args.dataset2_path)    
 
     
     # Set output paths - default to both plots if no specific output is provided

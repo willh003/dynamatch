@@ -1,0 +1,15 @@
+_target_: generative_policies.action_translation.FlowImageActionPriorTranslator
+name: pusher_flow_og_modphys_prior_image
+action_dim: 7
+image_dim: 224
+img_obs: True
+
+diffusion_step_embed_dim: 64
+down_dims: [64, 128, 256]
+num_inference_steps: 10
+
+weight_decay: 1e-4
+
+checkpoint_path: null
+
+

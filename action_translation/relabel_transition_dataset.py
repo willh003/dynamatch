@@ -95,40 +95,113 @@ def get_original_actions(train_set,
         error = np.array(original_actions) - np.array(physics_original_actions)
         print(f"Mean Diff from physics ID: {np.mean(error)}, Std Diff from physics ID: {np.std(error)}, Max Diff from physics ID: {np.max(error)}, Min Diff from physics ID: {np.min(error)}")
 
-    return np.array(states), np.array(original_actions), np.array(shifted_actions), np.array(next_states)
+    return np.array(original_actions), np.array(shifted_actions)
 
 
-def create_action_translation_dataset(states, original_actions, shifted_actions, next_states, output_path):
+def create_action_translation_dataset(train_set, original_actions, output_path):
     """Create and save dataset with (s, a_original, a_shifted) pairs."""
     print("=== Creating Action Translation Dataset ===")
     
-    # Create zarr store
+    # Dataset size and validation
+    num_samples = len(train_set)
+    assert num_samples == len(original_actions)
+    
+    # Detect sample structure and shapes via first element
+    first_sample = train_set[0]
+    has_images = isinstance(first_sample, (list, tuple)) and len(first_sample) == 5
+    if has_images:
+        s0, a0, s1, img0, img1 = first_sample
+    else:
+        s0, a0, s1 = first_sample
+    
+    # Resolve dtypes and shapes
+    s_shape = (s0.numpy() if hasattr(s0, 'numpy') else s0).shape
+    a_shape = (a0.numpy() if hasattr(a0, 'numpy') else a0).shape
+    s1_shape = (s1.numpy() if hasattr(s1, 'numpy') else s1).shape
+    if len(a_shape) == 0:
+        a_shape = (1,)
+    
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     store = zarr.open(output_path, mode='w')
-    
-    # Create data group
     data_group = store.create_group('data')
     
-    # Save states
-    data_group.create_array('state', data=states.astype(np.float32))
+    # Heuristic chunk size
+    chunk_n = min(1000, num_samples)
     
-    # Save original and shifted actions
-    data_group.create_array('original_action', data=original_actions.astype(np.float32))
-    data_group.create_array('shifted_action', data=shifted_actions.astype(np.float32))
-    data_group.create_array('next_state', data=next_states.astype(np.float32))
+    # Pre-create datasets with chunking
+    state_ds = data_group.create_dataset('state', shape=(num_samples, *s_shape), dtype=np.float32, chunks=(chunk_n, *s_shape))
+    next_state_ds = data_group.create_dataset('next_state', shape=(num_samples, *s1_shape), dtype=np.float32, chunks=(chunk_n, *s1_shape))
+    shifted_action_ds = data_group.create_dataset('shifted_action', shape=(num_samples, *a_shape), dtype=np.float32, chunks=(chunk_n, *a_shape))
+    original_action_ds = data_group.create_dataset('original_action', shape=(num_samples, *a_shape), dtype=np.float32, chunks=(chunk_n, *a_shape))
     
-    # Create meta group
+    if has_images:
+        img0_np = img0.numpy() if hasattr(img0, 'numpy') else img0
+        img1_np = img1.numpy() if hasattr(img1, 'numpy') else img1
+        img_shape = img0_np.shape
+        next_img_shape = img1_np.shape
+        img_dtype = img0_np.dtype
+        next_img_dtype = img1_np.dtype
+        img_ds = data_group.create_dataset('img', shape=(num_samples, *img_shape), dtype=img_dtype, chunks=(min(100, num_samples), *img_shape))
+        next_img_ds = data_group.create_dataset('next_img', shape=(num_samples, *next_img_shape), dtype=next_img_dtype, chunks=(min(100, num_samples), *next_img_shape))
+    
+    # Stream-write in batches
+    batch_size = 1000
+    num_batches = (num_samples + batch_size - 1) // batch_size
+    
+    for b in tqdm(range(num_batches), desc='Writing zarr batches'):
+        start = b * batch_size
+        end = min((b + 1) * batch_size, num_samples)
+        bs = end - start
+        
+        states_batch = np.empty((bs, *s_shape), dtype=np.float32)
+        next_states_batch = np.empty((bs, *s1_shape), dtype=np.float32)
+        shifted_actions_batch = np.empty((bs, *a_shape), dtype=np.float32)
+        if has_images:
+            # Defer dtype to dataset dtypes
+            imgs_batch = np.empty((bs, *img_shape), dtype=img_dtype)
+            next_imgs_batch = np.empty((bs, *next_img_shape), dtype=next_img_dtype)
+        
+        for i in range(bs):
+            sample = train_set[start + i]
+            if has_images:
+                state, shifted_action, next_state, img, next_img = sample
+            else:
+                state, shifted_action, next_state = sample
+            
+            state_np = state.numpy() if hasattr(state, 'numpy') else state
+            next_state_np = next_state.numpy() if hasattr(next_state, 'numpy') else next_state
+            shifted_action_np = shifted_action.numpy() if hasattr(shifted_action, 'numpy') else shifted_action
+            
+            states_batch[i] = state_np
+            next_states_batch[i] = next_state_np
+            shifted_actions_batch[i] = shifted_action_np
+            
+            if has_images:
+                img_np = img.numpy() if hasattr(img, 'numpy') else img
+                next_img_np = next_img.numpy() if hasattr(next_img, 'numpy') else next_img
+                imgs_batch[i] = img_np
+                next_imgs_batch[i] = next_img_np
+        
+        # Write batch slices
+        state_ds[start:end] = states_batch
+        next_state_ds[start:end] = next_states_batch
+        shifted_action_ds[start:end] = shifted_actions_batch
+        original_action_ds[start:end] = np.asarray(original_actions[start:end], dtype=np.float32)
+        if has_images:
+            img_ds[start:end] = imgs_batch
+            next_img_ds[start:end] = next_imgs_batch
+    
+    # Meta info
     meta_group = store.create_group('meta')
-    
-    # Save dataset info
-    meta_group.create_array('num_samples', data=np.array([len(states)]))
+    meta_group.create_array('num_samples', data=np.array([num_samples]))
     
     print(f"Saved action translation dataset to {output_path}")
-    print(f"Dataset size: {len(states)}")
-    print(f"State shape: {states.shape}")
-    print(f"Original action shape: {original_actions.shape}")
-    print(f"Shifted action shape: {shifted_actions.shape}")
-    print(f"Next state shape: {next_states.shape}")
+    print(f"Total samples: {num_samples}")
+    print(f"State shape per-sample: {s_shape}")
+    print(f"Action shape per-sample: {a_shape}")
+    print(f"Next state shape per-sample: {s1_shape}")
+    if has_images:
+        print(f"Image shape per-sample: {img_shape}, Next image per-sample: {next_img_shape}")
     
     return output_path
 
@@ -314,6 +387,7 @@ def main():
 
     dataset_config_path = args.dataset_config
     model_config = load_yaml_config(args.model_config)
+    dataset_config = load_yaml_config(dataset_config_path)
     dataset_path = get_transition_path_from_dataset_config(dataset_config_path)
     id_model_name = model_config['name']
 
@@ -333,22 +407,20 @@ def main():
     else:
         physics_inverse_dynamics_model = None
     
-    # Load transition dataset
-    states, actions, next_states = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
-
-    states_tensor = torch.FloatTensor(states)
-    actions_tensor = torch.FloatTensor(actions)
-    next_states_tensor = torch.FloatTensor(next_states)
-
-    train_set = TensorDataset(states_tensor, actions_tensor, next_states_tensor)
-
-    # Get original actions using inverse dynamics
-    states, original_actions, shifted_actions, next_states = get_original_actions(
+    # Load transition dataset, not using images for the ID for now    
+    train_set = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices, img_obs=False)
+    original_actions, shifted_actions = get_original_actions(
         train_set, inverse_dynamics_model, physics_inverse_dynamics_model, args.max_samples
     )
-    
+
+    # Load transition dataset with images if necessary (for saving)
+    img_obs = dataset_config.get('env_kwargs', {}).get('render_mode', None) == 'rgb_array'
+    if img_obs:
+        train_set = load_transition_dataset(dataset_path, state_indices=state_indices, action_indices=action_indices, img_obs=img_obs)
+        print("Saving action translation dataset with images")
+
     # Create and save action translation dataset
-    create_action_translation_dataset(states, original_actions, shifted_actions, next_states, output_path)
+    create_action_translation_dataset(train_set, original_actions, output_path)
     # Plot action distributions
     plot_action_distributions(original_actions, shifted_actions, output_path)
     plot_action_correlations(original_actions, shifted_actions, output_path)

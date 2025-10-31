@@ -13,13 +13,23 @@ from stable_baselines3.common.callbacks import BaseCallback
 from .env_transforms import ModifyPhysicsWrapper, modify_suite_door_physics, modify_suite_cube_physics, modify_suite_slide_physics
 from .robosuite_controllable_gripper import PandaControllableGripper
 
+def get_img_from_vec_env(vec_env):
+    """
+    Get the image from the vectorized environment
+    """
+    assert vec_env.render_mode == "rgb_array", "ERROR: vectorized environment must have render_mode set to rgb_array"
+    return np.array([env.render() for env in vec_env.envs])
 
 def make_vec_env(env_id: str, n_envs: int, **kwargs):
     """
     Make a vectorized environment for gym or robosuite
     """
-    env_make_fn = lambda: make_env(env_id, **kwargs)
-    return make_vec_env_sb3(env_make_fn, n_envs)
+    kwargs['env_id'] = env_id
+
+    # make_env takes render as boolean (for compatibility with various sims), so we convert render_mode to boolean
+    kwargs['render'] = kwargs.get('render_mode', None) == 'rgb_array'
+    vec_env = make_vec_env_sb3(make_env, n_envs, env_kwargs=kwargs)
+    return vec_env
 
 def parse_robosuite_env_id(env_id: str) -> dict:
     """
@@ -49,7 +59,7 @@ def parse_robosuite_env_id(env_id: str) -> dict:
     assert env_name is not None and robots is not None and physics_type is not None, "ERROR: could not parse environment id"
     return env_name, robots, reward_shaping, physics_type
 
-def make_env(env_id: str, render_mode: str = None, render: bool = False, **kwargs):
+def make_env(env_id: str, render: bool = False, **kwargs):
     """
     For robosuite, we expect format: Robosuite-<env_id>-<robot>
     Only uses render_mode for gym environments. Otherwise, uses RobosuiteImageWrapper to get images
@@ -89,10 +99,12 @@ def make_env(env_id: str, render_mode: str = None, render: bool = False, **kwarg
         print(f"Made env with name: {env_name}, robots: {robots}, reward_shaping: {reward_shaping}, physics_type: {physics_type}")
     else:
         render_mode = "rgb_array" if render else None
+        kwargs['render_mode'] = render_mode
 
         if "Pusher" in env_id:
             kwargs['max_episode_steps'] = 100
-        env = gym.make(env_id, render_mode=render_mode, **kwargs)
+            
+        env = gym.make(env_id, **kwargs)
 
 
     return env

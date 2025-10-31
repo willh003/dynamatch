@@ -2,8 +2,49 @@ import zarr
 import numpy as np
 import yaml
 import os
+from torch.utils.data import Dataset
+from torch.utils.data import TensorDataset
+import torch
 
-def load_transition_dataset(dataset_path, state_indices=None, action_indices=None):
+
+class ImageTransitionDataset(Dataset):
+    def __init__(self, dataset_path, state_indices=None, action_indices=None):
+        self.dataset_path = dataset_path
+        self.states, self.actions, self.next_states = load_transitions(dataset_path, state_indices=state_indices, action_indices=action_indices)
+        store = zarr.open(self.dataset_path, mode='r')
+
+        self.data = store['data']
+        self.meta = store['meta']
+        self.length = self.meta['num_samples'][0]
+        
+    def __getitem__(self, idx):
+        states,action,next_states = self.states[idx], self.actions[idx], self.next_states[idx]
+        
+        image = self.data['img'][idx]
+        next_image = self.data['next_img'][idx]
+
+        return states, action, next_states, image, next_image
+
+    def __len__(self):
+        return self.length
+
+def load_transition_dataset(dataset_path, state_indices=None, action_indices=None, img_obs=False):
+    if img_obs:
+        return ImageTransitionDataset(dataset_path, state_indices=state_indices, action_indices=action_indices)
+    
+    states, actions, next_states = load_transitions(dataset_path, state_indices=state_indices, action_indices=action_indices)
+
+    states_tensor = torch.FloatTensor(states)
+    actions_tensor = torch.FloatTensor(actions)
+    if len(actions_tensor.shape) == 1:
+        actions_tensor = actions_tensor.unsqueeze(1)
+
+    next_states_tensor = torch.FloatTensor(next_states)
+
+    train_set = TensorDataset(states_tensor, actions_tensor, next_states_tensor)
+    return train_set
+
+def load_transitions(dataset_path, state_indices=None, action_indices=None):
     """Load transition dataset from zarr file."""
     print("=== Loading Transition Dataset ===")
     
@@ -30,7 +71,6 @@ def load_transition_dataset(dataset_path, state_indices=None, action_indices=Non
     print(f"Next state shape: {next_states.shape}")
     
     return states, actions, next_states
-
 
 def get_transition_path_from_dataset_config(config_path):
     """Create output path by replacing 'sequence' with 'inverse_dynamics' in the buffer path."""

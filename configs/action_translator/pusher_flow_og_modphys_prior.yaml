@@ -7,6 +7,8 @@ diffusion_step_embed_dim: 32
 down_dims: [32, 64, 128]
 num_inference_steps: 10
 
+weight_decay: 1e-4
+
 # no weight decay (mid)
 #checkpoint_path: /home/wph52/weird/dynamics/datasets/pusher/relabeled_actions/pusher_modphys/pusher_flow_id/translator_pusher_flow_og_modphys_prior_20251025_160509_best.pth
 
